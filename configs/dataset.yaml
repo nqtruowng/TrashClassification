@@ -1,0 +1,107 @@
+schema_version: 1
+# IDs are the positions in this list. Changing the order requires a new release.
+classes: [organic, cardboard, glass, metal, paper, plastic]
+seed: 42
+split:
+  train: 0.8
+  val: 0.2
+eval:
+  test_source: realwaste  # Entire eligible source is reserved for the final test.
+
+# Source names are exact; DROP excludes a class, never a background label.
+sources:
+  - id: trashnet
+    local_root: raw-data/dataset-resized/dataset-resized
+    annotation_type: folder_classification
+    role: train_val
+    cap: null
+    mapping:
+      cardboard: cardboard
+      glass: glass
+      metal: metal
+      paper: paper
+      plastic: plastic
+      trash: DROP
+
+  - id: drinking-waste
+    local_root: raw-data/Images_of_Waste/YOLO_imgs
+    annotation_type: yolo_flat
+    role: train_val
+    cap: null
+    # Provisional order from the plan, not yet confirmed against image/label pairs.
+    class_names: [AluCan, Glass, HDPEM, PET]
+    class_order_verified: false
+    mapping:
+      AluCan: metal
+      Glass: glass
+      HDPEM: plastic
+      PET: plastic
+
+  - id: garbage-detection
+    local_root: raw-data/Garbage/GARBAGE CLASSIFICATION
+    annotation_type: yolo_split
+    native_data_yaml: raw-data/Garbage/GARBAGE CLASSIFICATION/data.yaml
+    role: train_val
+    cap: null
+    class_names: [BIODEGRADABLE, CARDBOARD, GLASS, METAL, PAPER, PLASTIC]
+    class_order_verified: true
+    mapping:
+      BIODEGRADABLE: organic
+      CARDBOARD: cardboard
+      GLASS: glass
+      METAL: metal
+      PAPER: paper
+      PLASTIC: plastic
+
+  - id: alistairking-household
+    local_root: raw-data/Recyclable and Household Waste/images/images
+    annotation_type: folder_classification
+    role: train_val
+    cap: null
+    mapping:
+      aerosol_cans: metal
+      aluminum_food_cans: metal
+      aluminum_soda_cans: metal
+      cardboard_boxes: cardboard
+      cardboard_packaging: cardboard
+      clothing: DROP
+      coffee_grounds: organic
+      disposable_plastic_cutlery: plastic
+      eggshells: organic
+      food_waste: organic
+      glass_beverage_bottles: glass
+      glass_cosmetic_containers: glass
+      glass_food_jars: glass
+      magazines: paper
+      newspaper: paper
+      office_paper: paper
+      paper_cups: paper
+      plastic_cup_lids: plastic
+      plastic_detergent_bottles: plastic
+      plastic_food_containers: plastic
+      plastic_shopping_bags: plastic
+      plastic_soda_bottles: plastic
+      plastic_straws: plastic
+      plastic_trash_bags: plastic
+      plastic_water_bottles: plastic
+      shoes: DROP
+      steel_food_cans: metal
+      styrofoam_cups: plastic
+      styrofoam_food_containers: plastic
+      tea_bags: organic
+
+  - id: realwaste
+    local_root: raw-data/realwaste/realwaste-main/RealWaste
+    annotation_type: folder_classification
+    role: test_only
+    cap: null
+    mapping:
+      Cardboard: cardboard
+      Food Organics: organic
+      Glass: glass
+      Metal: metal
+      Miscellaneous Trash: DROP
+      Paper: paper
+      Plastic: plastic
+      Textile Trash: DROP
+      Vegetation: organic

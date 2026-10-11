@@ -1,0 +1,10 @@
+[project]
+name = "trashclassifiication"
+version = "0.1.0"
+description = "Configuration and preprocessing tools for waste detection datasets"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pillow>=12.3.0",
+    "pyyaml>=6.0.3",
+]

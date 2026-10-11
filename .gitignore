@@ -1,0 +1,9 @@
+.venv/
+raw-data/
+processed-data/
+__pycache__/
+*.py[cod]
+artifacts/
+AGENTS.md
+tests/
+docs/
