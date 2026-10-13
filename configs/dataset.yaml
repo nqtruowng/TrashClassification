@@ -4,9 +4,10 @@ classes: [organic, cardboard, glass, metal, paper, plastic]
 seed: 42
 split:
   train: 0.8
-  val: 0.2
+  test: 0.1
+  val: 0.1
 
-# Both YOLO sources feed train/val. Source class names are exact.
+# Split both YOLO sources into train/test/val. Source class names are exact.
 sources:
   - id: drinking-waste
     local_root: raw-data/Images_of_Waste/YOLO_imgs

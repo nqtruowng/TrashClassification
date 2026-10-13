@@ -236,7 +236,7 @@ def run_clean(config, warnings, *, project_root=PROJECT_ROOT):
                    "near_policy": "dHash <=4 bits, aspect ratio within 1%, RGB thumbnail MAE <=8/255; "
                                   "compare all pixels at smaller shared dimensions; delete near copies only if RGB "
                                   "MAE <=2/255, RMS <=4/255 and <=1% channels differ >16/255. "
-                                  "Other candidates share group_id for train/val splitting.",
+                                  "Other candidates share group_id for train/test/val splitting.",
                    "scope": "Existing valid source boxes only; labels still require review. No split assignment."}
         clean_path, decisions_path = stage / "annotations.jsonl", stage / "decisions.jsonl"
         with clean_path.open("w", encoding="utf-8", newline="\n") as clean, decisions_path.open("w", encoding="utf-8", newline="\n") as decisions:

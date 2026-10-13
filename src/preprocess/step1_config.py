@@ -73,10 +73,10 @@ def resolve_path(value, root, location):
 
 
 def load_configuration(config_path="configs/dataset.yaml", *, project_root=PROJECT_ROOT):
-    """Bước 1: kiểm tra cấu hình hai dạng nguồn YOLO, mapping và tỷ lệ train/val.
+    """Bước 1: kiểm tra nguồn YOLO, mapping và tỷ lệ train/test/val.
 
     Đối chiếu lớp với YAML gốc nếu có; trả về cấu hình và các cảnh báo.
-    Chỉ xác nhận quy tắc hợp lệ, chưa kiểm kê ảnh hay chia dữ liệu train/val.
+    Chỉ xác nhận quy tắc hợp lệ, chưa kiểm kê ảnh hay chia dữ liệu.
     """
     root = project_root.resolve()
     config = read_yaml(root / config_path)
@@ -84,7 +84,7 @@ def load_configuration(config_path="configs/dataset.yaml", *, project_root=PROJE
     require(type(config["schema_version"]) is int and config["schema_version"] == 1, "config.schema_version", "expected version 1")
     classes = names(config["classes"], "config.classes")
     require(type(config["seed"]) is int and 0 <= config["seed"] < 2**32, "config.seed", "expected an integer in [0, 2**32)")
-    fields(config["split"], "config.split", ("train", "val"))
+    fields(config["split"], "config.split", ("train", "test", "val"))
     for split, ratio in config["split"].items():
         require(type(ratio) in (int, float) and 0 <= ratio <= 1, f"config.split.{split}", "expected a finite number in [0, 1]")
     require(math.isclose(sum(config["split"].values()), 1, abs_tol=1e-9, rel_tol=0), "config.split", "ratios must sum to 1")
@@ -144,7 +144,7 @@ def write_report(config, warnings, config_path, *, project_root=PROJECT_ROOT):
     output = artifact_path(config, "config-check.json", root)
     inputs = [root / config_path, root / "main.py", root / "src/preprocess/step1_config.py",
               root / "src/preprocess/step2_inventory.py", root / "src/preprocess/step3_remap.py",
-              root / "src/preprocess/step4_clean.py", root / "uv.lock"]
+              root / "src/preprocess/step4_clean.py", root / "src/preprocess/step6_split.py", root / "uv.lock"]
     report = {
         "status": "valid", "source_count": len(config["sources"]), "classes": config["classes"],
         "warnings": warnings, "python": sys.version,
