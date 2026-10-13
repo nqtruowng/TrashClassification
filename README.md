@@ -1,6 +1,6 @@
 # Trash Classification
 
-Đã triển khai bước 1 (kiểm tra cấu hình), bước 2 (kiểm kê 5 nguồn dữ liệu) và bước 3 (chuẩn hóa lớp, trạng thái nhãn). Kế hoạch tiếp theo: `docs/plans/dataset-preprocessing-plan.md`.
+Đã triển khai bước 1 (kiểm tra cấu hình), bước 2 (kiểm kê), bước 3 (chuẩn hóa lớp) và bước 4 (lọc ảnh lỗi/trùng, chuẩn hóa ảnh). Kế hoạch tiếp theo: `docs/plans/dataset-preprocessing-plan.md`.
 
 ## Cấu trúc
 
@@ -10,14 +10,15 @@ src/preprocess/
   step1_config.py             # Bước 1: kiểm tra cấu hình, báo cáo môi trường
   step2_inventory.py          # Bước 2: kiểm kê ảnh/nhãn và thống kê
   step3_remap.py              # Bước 3: remap lớp, giữ nhãn gốc và phân luồng xử lý
+  step4_clean.py              # Bước 4: loại ảnh lỗi/trùng, chuẩn hóa và gom nhóm
 configs/dataset.yaml           # Cấu hình chung: lớp, split, nguồn, mapping
 raw-data/                     # Dữ liệu gốc
 processed-data/               # Chỉ dataset đã làm sạch, sẵn sàng train
 artifacts/                    # Báo cáo và dữ liệu trung gian khi cần
-tests/test_config.py          # Kiểm thử cấu hình, kiểm kê và remap
+tests/test_config.py          # Kiểm thử các bước tiền xử lý
 ```
 
-`processed-data/` hiện để trống vì chưa làm sạch dữ liệu. Khi xuất dataset, chỉ đặt ảnh, nhãn và YAML dùng để train ở đây. Manifest, log, báo cáo, ảnh lỗi, nhãn chờ duyệt và dữ liệu tạm nằm trong `artifacts/`.
+`processed-data/` hiện để trống vì chưa hoàn tất gán nhãn, chia tập và xuất dataset. Khi xuất dataset, chỉ đặt ảnh, nhãn và YAML dùng để train ở đây. Manifest, báo cáo loại ảnh, nhãn chờ duyệt và dữ liệu trung gian nằm trong `artifacts/`; bước 4 không sao chép ảnh lỗi vào đầu ra.
 
 Các hàm có chú thích tiếng Việt ngay trong file của bước tương ứng. Bước 2 dùng lại hàm kiểm tra đường dẫn và báo lỗi của bước 1, không sao chép logic.
 
@@ -97,6 +98,46 @@ Kết quả chạy toàn bộ ngày 13/10/2026: 37.572 ảnh, gồm 20.339 `need
 
 Đối chiếu tự động drinking-waste: 4.774 ảnh có ID hợp lệ khớp tiền tố lớp, 24 ảnh không có tiền tố lớp xác định và 31 ảnh không có box đọc hợp lệ. Không có mâu thuẫn trong nhóm đối chiếu được; 55 ảnh còn lại chưa được xác minh bằng phép đối chiếu tên này.
 
+## Làm sạch ảnh và lọc trùng — bước 4
+
+```powershell
+uv run --locked python -B main.py --stage clean
+```
+
+Bước này đọc kết quả remap và kiểm tra checksum/cấu hình trước khi chạy. Theo yêu cầu, ảnh lỗi bị loại khỏi dữ liệu đi tiếp ngay; không tạo bộ ảnh lỗi để nhận lại. `raw-data/` vẫn giữ nguyên. Ảnh/nhãn ngoài phạm vi cũng không được đưa vào đầu ra sạch.
+
+- Đọc và giải mã đầy đủ ảnh bằng 4 luồng; dùng SHA-256 file và SHA-256 pixel RGB sau áp EXIF để tìm bản trùng chính xác, kể cả khác metadata.
+- Dùng dHash 64 bit tìm ảnh gần trùng (khoảng cách tối đa 4 bit), rồi đối chiếu tỷ lệ ảnh và sai khác màu thumbnail. Chỉ loại bản gần trùng nếu đối chiếu pixel toàn ảnh ở kích thước chung nhỏ hơn đạt ngưỡng: MAE tối đa 2/255, RMS tối đa 4/255 và tối đa 1% mẫu kênh màu lệch quá 16/255. Việc resize chỉ phục vụ so sánh; ảnh đầu ra không resize. Các số đo được lưu cùng cặp ảnh để truy vết. Hash gần nhau riêng lẻ không đủ để xóa ảnh.
+- Cặp tương tự chưa đạt điều kiện loại vẫn cùng `group_id` để tránh bị chia sang các tập khác nhau. Báo cáo ghi rõ `near_copy` và `near_candidate`; không khẳng định mọi ứng viên là cùng vật thể. Không suy ra chuỗi cùng vật thể chỉ từ số thứ tự tên file. Với Garbage, đã kiểm tra phần tên trước `.rf.<hash>` và không thấy tên gốc lặp trong lần kiểm kê hiện tại.
+- Đối chiếu cả 5 nguồn. Nhóm có RealWaste chỉ giữ các bản phù hợp phía test; loại ảnh train/val trong nhóm để tránh rò rỉ, kể cả nhóm ứng viên gần trùng. Trong các bản sao đủ điều kiện, xét lỗi nhãn, sự hiện diện box, độ phân giải và ID ổn định để chọn đại diện; không ưu tiên thứ tự nguồn.
+- Nhãn khác nhau trong nhóm bản sao được ghi `duplicate_label_conflict`, giữ trạng thái cần kiểm tra ở bước 5. Nhãn gốc vẫn truy được từ kết quả bước 3 và các ID trong báo cáo; không tự coi nhãn được chọn là đúng.
+- Chuẩn hóa RGB, EXIF và tọa độ box cho đủ 8 hướng; giữ kích thước/tỷ lệ, không crop hoặc kéo giãn ảnh. Ảnh trong suốt dùng nền trắng. Chỉ lưu PNG mới nếu ảnh thực sự cần đổi hướng/màu; các ảnh khác tham chiếu bản gốc.
+
+Đầu ra tập trung trong `artifacts/clean/`, thay cùng thư mục khi chạy lại thành công:
+
+| File | Nội dung |
+|---|---|
+| `annotations.jsonl` | Chỉ các ảnh còn giữ, nhãn, `group_id`, hash và `image_path` dùng cho bước tiếp theo |
+| `decisions.jsonl` | Quyết định giữ/loại cho mỗi bản ghi và các cặp trùng/gần trùng kèm bằng chứng |
+| `summary.json` | Số giữ/loại theo nguồn, lý do loại, ngưỡng kiểm tra và checksum |
+| `images/` | Chỉ các ảnh còn giữ cần chuẩn hóa; không sao chép toàn bộ dataset |
+
+`image_path` là đường dẫn tuyệt đối tới ảnh nguồn, hoặc đường dẫn tính từ gốc project tới ảnh đã chuẩn hóa. Box trong `objects` tương ứng đúng ảnh này; `original_label` vẫn giữ nội dung nguồn trước biến đổi. File ảnh lỗi và bản trùng không có trong `annotations.jsonl`; lý do loại chỉ nằm trong báo cáo. Các ứng viên gần trùng còn lại cần được xem cùng nhau khi gán/duyệt nhãn bước 5. Pipeline chưa xuất dataset train vào `processed-data/`.
+
+Kết quả chạy toàn bộ ngày 13/10/2026: từ 37.572 ảnh còn **29.897 ảnh**; loại **5.717 bản trùng**, **8 ảnh lỗi** và **1.950 ảnh ngoài phạm vi**. Không phát hiện overlap với RealWaste theo các phép đối chiếu đã triển khai; 813 ảnh RealWaste bị loại đều thuộc lớp DROP.
+
+| Nguồn | Giữ lại | Loại khỏi đầu ra |
+|---|---:|---:|
+| TrashNet | 1.721 | 806 |
+| Drinking-waste | 4.734 | 95 |
+| Garbage | 10.458 | 6 |
+| Household | 9.045 | 5.955 |
+| RealWaste | 3.939 | 813 |
+
+Đầu ra có 25.958 ảnh mang vai trò train/val và 3.939 ảnh test, chưa chia train/val. Có 29.282 nhóm; hash file/pixel không trùng và các nhóm đã nhận diện không giao nhau giữa hai vai trò. Chỉ 1 ảnh cần lưu bản chuẩn hóa EXIF. Báo cáo có 4.492 cạnh trùng file, 1.837 cạnh bản sao gần trùng đã đối chiếu pixel và 1.159 cạnh ứng viên gần trùng; số cạnh không phải số ảnh bị loại vì một nhóm có thể có nhiều cặp.
+
+Còn 14.676 ảnh cần gán box và 15.221 ảnh cần kiểm tra nhãn, gồm 788 ảnh đại diện có mâu thuẫn nhãn giữa các bản sao và 18 file nhãn lỗi. Ảnh lỗi giải mã đã bị loại hết; nhãn lỗi thuộc công việc bước 5. Đã kiểm tra checksum, toàn bộ ID/hash/role, đường dẫn ảnh, ảnh chuẩn hóa và xem mẫu các cặp gần trùng, gồm các cặp sát ngưỡng loại. Các phép hash/so sánh trên không khẳng định phát hiện mọi góc chụp của cùng vật thể.
+
 ## Cấu hình
 
 - ID đích: `organic, cardboard, glass, metal, paper, plastic`; seed 42, chia train/val 80/20 cho 4 nguồn ngoài RealWaste.
@@ -106,7 +147,7 @@ Kết quả chạy toàn bộ ngày 13/10/2026: 37.572 ảnh, gồm 20.339 `need
 - Tất cả nguồn có `cap: null`: không giới hạn 750 ảnh. Chỉ dữ liệu đủ điều kiện sau làm sạch/gán nhãn mới được xuất. Các split gốc của Garbage được ghi lại rồi chia lại train/val.
 - Từ chối khóa lạ/trùng, mapping thiếu, đường dẫn sai, split không đủ 1, cap âm, thứ tự lớp và nguồn test mâu thuẫn.
 - Drinking-waste chưa xác minh thứ tự ID. Cấu hình dùng trực tiếp `mapping` đã khai báo; cấu hình hợp lệ chưa có nghĩa ảnh/box đã được duyệt.
-- RealWaste được giữ làm test; cần gán và duyệt box trước khi đánh giá detection. Ba nguồn classification đều cần gán box; đã remap lớp nhưng chưa làm sạch hoặc xuất YOLO.
+- RealWaste được giữ làm test; cần gán và duyệt box trước khi đánh giá detection. Ba nguồn classification đều cần gán box; đã remap và triển khai làm sạch ảnh, chưa xuất YOLO.
 
 ## Nguồn và ghi công
 
@@ -132,4 +173,4 @@ Kết quả chạy toàn bộ ngày 13/10/2026: 37.572 ảnh, gồm 20.339 `need
 uv run --locked python -B -m unittest discover -s tests -v
 ```
 
-Môi trường đã chạy: Python 3.14.7, PyYAML 6.0.3, Pillow 12.3.0. `uv.lock` cố định dependency. 28 kiểm thử cấu hình, kiểm kê và remap đạt. Chưa kiểm chứng môi trường model-assisted labeling.
+Môi trường đã chạy: Python 3.14.7, PyYAML 6.0.3, Pillow 12.3.0. `uv.lock` cố định dependency. 34 kiểm thử cấu hình, kiểm kê, remap và làm sạch đạt. Không thêm dependency ở bước 4. Chưa kiểm chứng môi trường model-assisted labeling.

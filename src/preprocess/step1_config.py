@@ -159,7 +159,8 @@ def write_report(config, warnings, config_path, *, project_root=PROJECT_ROOT):
     root = project_root.resolve()
     output = artifact_path(config, "config-check.json", root)
     inputs = [root / config_path, root / "main.py", root / "src/preprocess/step1_config.py",
-              root / "src/preprocess/step2_inventory.py", root / "src/preprocess/step3_remap.py", root / "uv.lock"]
+              root / "src/preprocess/step2_inventory.py", root / "src/preprocess/step3_remap.py",
+              root / "src/preprocess/step4_clean.py", root / "uv.lock"]
     report = {
         "status": "valid", "source_count": len(config["sources"]), "classes": config["classes"],
         "warnings": warnings, "python": sys.version,
