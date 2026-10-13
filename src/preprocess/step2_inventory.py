@@ -17,16 +17,16 @@ from .step1_config import PROJECT_ROOT, artifact_path, require
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".gif", ".heic"}
 MANIFEST_FIELDS = (
-    "record_type", "image_id", "source_dataset", "original_path", "original_split", "scene_type",
+    "record_type", "image_id", "source_dataset", "original_path", "original_split",
     "source_classes", "source_class_ids", "width", "height", "mode", "exif_orientation",
-    "annotation_type", "label_path", "annotation_status", "image_status", "object_count", "role", "errors",
+    "annotation_type", "label_path", "annotation_status", "image_status", "object_count", "errors",
 )
 
 
 def index_source(source, root):
     """Bước 2: lập chỉ mục ảnh/nhãn theo cấu trúc của từng nguồn.
 
-    Giữ lớp thư mục, split gốc và bối cảnh; bỏ file phụ. Chuẩn hóa tên không phân
+    Giữ split gốc của YOLO; bỏ file phụ. Chuẩn hóa tên không phân
     biệt hoa thường để ghép ảnh/TXT trong cùng nguồn/split/thư mục, báo lỗi nếu trùng.
     Trả về gốc nguồn, hai chỉ mục ảnh/nhãn và số file bỏ qua; chưa đọc nội dung ảnh.
     """
@@ -41,11 +41,11 @@ def index_source(source, root):
             ignored += 1
             continue
         is_image = suffix in IMAGE_SUFFIXES
-        is_label = suffix == ".txt" and source["annotation_type"] != "folder_classification"
+        is_label = suffix == ".txt"
         if not (is_image or is_label):
             ignored += 1
             continue
-        split, scene, folder_class = "", "", ""
+        split = ""
         key = relative.with_suffix("").as_posix().casefold()
         if source["annotation_type"] == "yolo_split":
             require(len(parts) >= 3 and parts[0] in ("train", "val", "valid", "test")
@@ -53,15 +53,9 @@ def index_source(source, root):
                     str(path), "expected split/images or split/labels layout")
             split = parts[0]
             key = (Path(split) / Path(*parts[2:]).with_suffix("")).as_posix().casefold()
-        elif source["annotation_type"] == "folder_classification":
-            require(len(parts) >= 2 and parts[0] in source["mapping"], str(path), "unknown folder class")
-            folder_class = parts[0]
-            if len(parts) > 2:
-                require(parts[1] in ("default", "real_world"), str(path), "unknown classification scene directory")
-                scene = parts[1]
         index = images if is_image else labels
         require(key not in index, source["id"], f"normalized filename collision: {path} and {index.get(key)}")
-        index[key] = (path, split, scene, folder_class) if is_image else path
+        index[key] = (path, split) if is_image else path
     require(bool(images), source["id"], "no supported images found")
     return local, images, labels, ignored
 
@@ -156,35 +150,29 @@ def run_inventory(config, warnings, *, project_root=PROJECT_ROOT):
             for source, (local, images, labels, ignored) in indexed:
                 print(f"Inventory {source['id']}: {len(images)} images...", flush=True)
                 counts = Counter({key: 0 for key in ("images", "paired_labels", "missing_labels", "empty_labels",
-                    "invalid_labels", "orphan_labels", "needs_annotation", "decode_errors", "decode_warnings")})
-                classes, objects, splits, scenes = Counter(), Counter(), Counter(), Counter()
-                for number, (key, (path, split, scene, folder_class)) in enumerate(sorted(images.items()), 1):
+                    "invalid_labels", "orphan_labels", "decode_errors", "decode_warnings")})
+                classes, objects, splits = Counter(), Counter(), Counter()
+                for number, (key, (path, split)) in enumerate(sorted(images.items()), 1):
                     relative = path.relative_to(local).as_posix()
                     label = labels.get(key)
                     row = dict.fromkeys(MANIFEST_FIELDS, "")
                     row.update(record_type="image", image_id=hashlib.sha256(f"{source['id']}\0{relative}".encode()).hexdigest(),
-                               source_dataset=source["id"], original_path=relative, original_split=split, scene_type=scene,
-                               annotation_type=source["annotation_type"], role=source["role"])
+                               source_dataset=source["id"], original_path=relative, original_split=split,
+                               annotation_type=source["annotation_type"])
                     metadata, row["image_status"], errors = inspect_image(path)
                     row.update(metadata)
-                    ids, source_classes = [], [folder_class] if folder_class else []
-                    if folder_class:
-                        row["annotation_status"] = "needs_annotation"
-                        counts["needs_annotation"] += 1
-                        classes[folder_class] += 1
-                    else:
-                        status, object_counts, label_errors = inspect_label(label, source)
-                        row.update(annotation_status=status, label_path=label.relative_to(local).as_posix() if label else "")
-                        errors.extend(label_errors)
-                        counts["paired_labels" if label else "missing_labels"] += 1
-                        if status in ("invalid", "empty_unverified"):
-                            counts["invalid_labels" if status == "invalid" else "empty_labels"] += 1
-                        ids = sorted(object_counts)
-                        source_classes = [source["class_names"][i] for i in ids]
-                        row["object_count"] = sum(object_counts.values())
-                        if status == "unreviewed":
-                            classes.update(source_classes)
-                            objects.update({source["class_names"][i]: n for i, n in object_counts.items()})
+                    status, object_counts, label_errors = inspect_label(label, source)
+                    row.update(annotation_status=status, label_path=label.relative_to(local).as_posix() if label else "")
+                    errors.extend(label_errors)
+                    counts["paired_labels" if label else "missing_labels"] += 1
+                    if status in ("invalid", "empty_unverified"):
+                        counts["invalid_labels" if status == "invalid" else "empty_labels"] += 1
+                    ids = sorted(object_counts)
+                    source_classes = [source["class_names"][i] for i in ids]
+                    row["object_count"] = sum(object_counts.values())
+                    if status == "unreviewed":
+                        classes.update(source_classes)
+                        objects.update({source["class_names"][i]: n for i, n in object_counts.items()})
                     row.update(source_classes=json.dumps(source_classes, ensure_ascii=False),
                                source_class_ids=json.dumps(ids), errors=json.dumps(errors, ensure_ascii=False))
                     writer.writerow(row)
@@ -192,20 +180,18 @@ def run_inventory(config, warnings, *, project_root=PROJECT_ROOT):
                     counts["decode_errors"] += row["image_status"] == "decode_error"
                     counts["decode_warnings"] += row["image_status"] == "decode_warning"
                     splits[split or "unspecified"] += 1
-                    scenes[scene or "unspecified"] += 1
                     if number % 1000 == 0:
                         print(f"  {source['id']}: {number}/{len(images)}", flush=True)
                 for key in sorted(labels.keys() - images.keys()):
                     writer.writerow({"record_type": "orphan_label", "source_dataset": source["id"],
                                      "label_path": labels[key].relative_to(local).as_posix(),
                                      "original_split": key.split("/")[0] if source["annotation_type"] == "yolo_split" else "",
-                                     "annotation_type": source["annotation_type"], "role": source["role"],
+                                     "annotation_type": source["annotation_type"],
                                      "annotation_status": "orphan", "errors": '["label has no image"]'})
                     counts["orphan_labels"] += 1
-                summary["sources"][source["id"]] = {**counts, "local_root": source["local_root"], "role": source["role"],
+                summary["sources"][source["id"]] = {**counts, "local_root": source["local_root"],
                     "label_files": len(labels), "ignored_files": ignored, "images_by_class": dict(sorted(classes.items())),
-                    "objects_by_class": dict(sorted(objects.items())), "original_splits": dict(sorted(splits.items())),
-                    "scene_types": dict(sorted(scenes.items()))}
+                    "objects_by_class": dict(sorted(objects.items())), "original_splits": dict(sorted(splits.items()))}
         summary["totals"] = {key: sum(source[key] for source in summary["sources"].values())
                              for key in (*counts.keys(), "label_files", "ignored_files")}
         summary["manifest_sha256"] = hashlib.sha256(temp_manifest.read_bytes()).hexdigest()

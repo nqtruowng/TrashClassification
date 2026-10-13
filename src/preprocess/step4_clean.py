@@ -1,4 +1,4 @@
-"""Bước 4: loại ảnh lỗi/trùng, chuẩn hóa ảnh và gom nhóm chống rò rỉ dữ liệu."""
+"""Bước 4: lọc ảnh/nhãn lỗi và ảnh trùng, giữ ảnh có box nguồn, gom nhóm chống rò rỉ."""
 
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -167,36 +167,29 @@ def group_duplicates(records, rows, paths):
             duplicate_groups[find(copies, i)].append(i)
     for members in groups.values():
         group_id = min(records[i]["image_id"] for i in members)
-        has_test = any(rows[i]["role"] == "test_only" for i in members)
         for i in members:
             records[i]["group_id"] = group_id
-            if has_test and rows[i]["role"] != "test_only":
-                records[i].update(decision="remove", reasons=["overlap_with_test"])
     for members in duplicate_groups.values():
         # Kiểm tra mâu thuẫn trước khi chọn đại diện; không tự coi nhãn đại diện là đúng.
         signatures = {json.dumps({"classes": rows[i]["target_class_ids"],
                                   "boxes": sorted((obj["target_class_id"], *orient_box(obj["bbox_xywh"], records[i]["orientation"]))
-                                                  for obj in rows[i]["objects"] if obj["target_class_id"] is not None)},
+                                                  for obj in rows[i]["objects"])},
                                  sort_keys=True) for i in members}
         conflict = len(signatures) > 1
-        eligible = [i for i in members if records[i]["decision"] == "keep"
-                    and rows[i]["annotation_status"] not in ("excluded", "out_of_scope")]
-        if not eligible:
-            continue
         # Chất lượng nhãn và độ phân giải đứng trước ID; không ưu tiên thứ tự nguồn.
-        chosen = min(eligible, key=lambda i: ("invalid_label" in rows[i]["reasons"], not bool(rows[i]["objects"]),
+        chosen = min(members, key=lambda i: ("invalid_label" in rows[i]["reasons"], not bool(rows[i]["objects"]),
                                              -records[i]["width"]*records[i]["height"], records[i]["image_id"]))
         for i in members:
             records[i]["duplicate_of"] = records[chosen]["image_id"] if i != chosen else None
             if conflict:
                 records[i]["label_conflict"] = True
-            if i != chosen and records[i]["decision"] == "keep":
+            if i != chosen:
                 records[i].update(decision="remove", reasons=["duplicate_image"])
     return edges
 
 
 def run_clean(config, warnings, *, project_root=PROJECT_ROOT):
-    """Chạy bước 4 vào artifacts/clean, chỉ đưa ảnh hợp lệ còn duy nhất đi tiếp.
+    """Chạy bước 4 vào artifacts/clean, chỉ giữ ảnh có nhãn nguồn hợp lệ và không trùng.
 
     Giữ raw-data bất biến; ảnh lỗi không có trong annotations đầu ra. Chỉ lưu ảnh
     chuẩn hóa nếu thực sự thay đổi. Thư mục tạm thay kết quả cũ khi hoàn tất.
@@ -243,15 +236,20 @@ def run_clean(config, warnings, *, project_root=PROJECT_ROOT):
                    "near_policy": "dHash <=4 bits, aspect ratio within 1%, RGB thumbnail MAE <=8/255; "
                                   "compare all pixels at smaller shared dimensions; delete near copies only if RGB "
                                   "MAE <=2/255, RMS <=4/255 and <=1% channels differ >16/255. "
-                                  "Other candidates share group_id; test overlap removes training copies.",
-                   "scope": "Image cleaning only; labels still require step 5. No split assignment."}
+                                  "Other candidates share group_id for train/val splitting.",
+                   "scope": "Existing valid source boxes only; labels still require review. No split assignment."}
         clean_path, decisions_path = stage / "annotations.jsonl", stage / "decisions.jsonl"
         with clean_path.open("w", encoding="utf-8", newline="\n") as clean, decisions_path.open("w", encoding="utf-8", newline="\n") as decisions:
             for row, result in zip(rows, records):
                 for key in ("_thumbnail", "_textured"):
                     result.pop(key, None)
-                if result["decision"] == "keep" and row["annotation_status"] in ("excluded", "out_of_scope"):
-                    result.update(decision="remove", reasons=[row["annotation_status"]])
+                # Chỉ dùng nhãn có sẵn; không đưa ảnh cần gán/sửa nhãn vào đầu ra sạch.
+                if result["decision"] == "keep":
+                    label_reason = {"missing": "missing_label", "empty_unverified": "empty_label_unverified",
+                                    "invalid": "invalid_label"}.get(
+                                        row["original_annotation_status"])
+                    if label_reason:
+                        result.update(decision="remove", reasons=[label_reason])
                 count = summary["by_source"].setdefault(row["source_dataset"], {"kept": 0, "removed": 0})
                 kept = result["decision"] == "keep"
                 summary["kept" if kept else "removed"] += 1

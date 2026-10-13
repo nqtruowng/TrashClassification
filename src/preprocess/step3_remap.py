@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 
 from .step1_config import PROJECT_ROOT, artifact_path, require
-from .step2_inventory import read_label
+from .step2_inventory import MANIFEST_FIELDS, read_label
 
 
 def source_path(local, relative):
@@ -27,11 +27,10 @@ def audit_class_order(rows, sources):
     """
     audit = {sid: {"class_names": s["class_names"], "matched": 0, "unmatched_filename": 0,
                    "without_valid_objects": 0, "examples": {}}
-             for sid, s in sources.items() if s["annotation_type"] != "folder_classification"
-             and not s["class_order_verified"]}
+             for sid, s in sources.items() if not s["class_order_verified"]}
     for row in rows:
         source = sources[row["source_dataset"]]
-        if row["record_type"] != "image" or source["annotation_type"] == "folder_classification":
+        if row["record_type"] != "image":
             continue
         ids = json.loads(row["source_class_ids"])
         require(all(0 <= i < len(source["class_names"]) for i in ids)
@@ -54,10 +53,9 @@ def audit_class_order(rows, sources):
 
 
 def remap_record(row, source, classes, root):
-    """Ánh xạ một ảnh/nhãn, giữ cả đối tượng DROP và lý do phải xử lý tiếp.
+    """Ánh xạ box YOLO sang lớp đích, giữ nhãn gốc và lý do phải kiểm tra tiếp.
 
-    Nhãn thư mục chỉ có lớp ảnh, không tạo box giả. Nhãn thiếu/rỗng không trở
-    thành background; ảnh có lớp giữ lẫn DROP phải kiểm tra toàn bộ trước khi dùng.
+    Nhãn thiếu/rỗng không trở thành background; không tự xác nhận nhãn nguồn.
     """
     local = (root / source["local_root"]).resolve()
     record = {**row, "original_annotation_status": row["annotation_status"],
@@ -69,58 +67,41 @@ def remap_record(row, source, classes, root):
     for key in ("width", "height", "exif_orientation", "object_count"):
         record[key] = int(row[key]) if row[key] else None
     reasons = record["reasons"]
-    folder = source["annotation_type"] == "folder_classification"
     if row["record_type"] == "image":
         require(source_path(local, row["original_path"]).is_file(), row["original_path"],
                 "image missing since inventory; rerun inventory")
-    if folder:
-        names = record["source_classes"]
-        require(len(names) == 1 and names[0] in source["mapping"], source["id"], "unknown folder class")
-        target = source["mapping"][names[0]]
-        targets = [] if target == "DROP" else [target]
-        status = "out_of_scope" if target == "DROP" else "needs_annotation"
-        reasons.append("all_classes_dropped" if target == "DROP" else "folder_label_has_no_boxes")
+    path = source_path(local, row["label_path"]) if row["label_path"] else None
+    label_status, original, objects, errors = read_label(path, source)
+    record["original_label"] = original
+    record["class_order_verified"] = source["class_order_verified"]
+    if row["record_type"] == "image":
+        require(label_status == row["annotation_status"]
+                and len(objects) == int(row["object_count"])
+                and sorted({obj["source_class_id"] for obj in objects}) == record["source_class_ids"],
+                row["label_path"] or row["original_path"], "labels changed since inventory; rerun inventory")
+    record["errors"] = list(dict.fromkeys(record["errors"] + errors))
+    for obj in objects:
+        name = source["class_names"][obj["source_class_id"]]
+        target = source["mapping"][name]
+        obj.update(source_class_name=name, target_class_name=target, target_class_id=classes.index(target))
+    record["objects"] = objects
+    targets = sorted({obj["target_class_name"] for obj in objects}, key=classes.index)
+    status = "needs_review"
+    if label_status in ("missing", "empty_unverified"):
+        status = "needs_annotation"
+        reasons.append("missing_label" if label_status == "missing" else "empty_label_unverified")
+    elif label_status == "invalid":
+        reasons.append("invalid_label")
     else:
-        path = source_path(local, row["label_path"]) if row["label_path"] else None
-        label_status, original, objects, errors = read_label(path, source)
-        record["original_label"] = original
-        record["class_order_verified"] = source["class_order_verified"]
-        if row["record_type"] == "image":
-            require(label_status == row["annotation_status"]
-                    and len(objects) == int(row["object_count"])
-                    and sorted({obj["source_class_id"] for obj in objects}) == record["source_class_ids"],
-                    row["label_path"] or row["original_path"], "labels changed since inventory; rerun inventory")
-        record["errors"] = list(dict.fromkeys(record["errors"] + errors))
-        for obj in objects:
-            name = source["class_names"][obj["source_class_id"]]
-            target = source["mapping"][name]
-            obj.update(source_class_name=name, target_class_name=None if target == "DROP" else target,
-                       target_class_id=classes.index(target) if target != "DROP" else None,
-                       mapping_status="dropped" if target == "DROP" else "mapped")
-        record["objects"] = objects
-        targets = sorted({obj["target_class_name"] for obj in objects if obj["mapping_status"] == "mapped"},
-                         key=classes.index)
-        dropped = any(obj["mapping_status"] == "dropped" for obj in objects)
-        status = "needs_review"
-        if label_status in ("missing", "empty_unverified"):
-            status = "needs_annotation"
-            reasons.append("missing_label" if label_status == "missing" else "empty_label_unverified")
-        elif label_status == "invalid":
-            reasons.append("invalid_label")
-        elif dropped and not targets:
-            status = "out_of_scope"
-            reasons.append("all_classes_dropped")
-        else:
-            reasons.append("mixed_kept_and_dropped_objects" if dropped else "boxes_not_reviewed")
-        if not source["class_order_verified"]:
-            reasons.append("source_class_order_unverified")
+        reasons.append("boxes_not_reviewed")
+    if not source["class_order_verified"]:
+        reasons.append("source_class_order_unverified")
     if row["record_type"] == "orphan_label" or row["image_status"] == "decode_error":
         status = "excluded"
         reasons.append("orphan_label" if row["record_type"] == "orphan_label" else "image_decode_error")
     elif row["image_status"] == "decode_warning":
         reasons.append("image_decode_warning")
-        if status != "out_of_scope":
-            status = "needs_review"
+        status = "needs_review"
     record.update(annotation_status=status, target_classes=targets,
                   target_class_ids=[classes.index(name) for name in targets])
     return record
@@ -130,7 +111,7 @@ def run_remap(config, warnings, *, project_root=PROJECT_ROOT):
     """Đọc manifest bước 2, remap vào một JSONL và xuất thống kê cùng checksum.
 
     Các hàng đợi được lọc bằng annotation_status trong cùng file để tránh bản sao.
-    Giữ role train_val/test_only và split gốc; chưa chia tập hoặc xuất dữ liệu train.
+    Giữ split gốc của nguồn; chưa chia train/val hoặc xuất dữ liệu train.
     """
     root = project_root.resolve()
     manifest = artifact_path(config, "manifest.csv", root)
@@ -144,16 +125,18 @@ def run_remap(config, warnings, *, project_root=PROJECT_ROOT):
     sources = {source["id"]: source for source in config["sources"]}
     require(sources.keys() == inventory["sources"].keys(), "remap", "sources changed; rerun inventory")
     for sid, source in sources.items():
-        require(all(source[key] == inventory["sources"][sid][key] for key in ("local_root", "role")),
-                sid, "source root/role changed; rerun inventory")
+        require(source["local_root"] == inventory["sources"][sid]["local_root"],
+                sid, "source root changed; rerun inventory")
     with manifest.open(encoding="utf-8", newline="") as stream:
-        rows = list(csv.DictReader(stream))
+        reader = csv.DictReader(stream)
+        require(reader.fieldnames == list(MANIFEST_FIELDS), "manifest", "fields changed; rerun inventory")
+        rows = list(reader)
     for row in rows:
         require(row["source_dataset"] in sources, "manifest", "unknown source")
         source = sources[row["source_dataset"]]
         require(row["record_type"] in ("image", "orphan_label")
-                and row["annotation_type"] == source["annotation_type"] and row["role"] == source["role"],
-                source["id"], "source type/role differs from inventory; rerun inventory")
+                and row["annotation_type"] == source["annotation_type"],
+                source["id"], "source type differs from inventory; rerun inventory")
     audit = audit_class_order(rows, sources)
     summary = {"schema_version": 1, "classes": config["classes"], "warnings": warnings,
                "manifest_sha256": checksum, "configuration": config, "class_order_audit": audit,
@@ -167,16 +150,14 @@ def run_remap(config, warnings, *, project_root=PROJECT_ROOT):
                 record = remap_record(row, source, config["classes"], root)
                 stream.write(json.dumps(record, ensure_ascii=False) + "\n")
                 counts = summary["sources"].setdefault(source["id"], {
-                    "role": source["role"], "images": 0, "orphan_labels": 0, "statuses": Counter(),
-                    "images_by_target_class": Counter(), "candidate_objects_by_target_class": Counter(),
-                    "dropped_objects": 0})
+                    "images": 0, "orphan_labels": 0, "statuses": Counter(),
+                    "images_by_target_class": Counter(), "candidate_objects_by_target_class": Counter()})
                 counts["images" if row["record_type"] == "image" else "orphan_labels"] += 1
                 counts["statuses"][record["annotation_status"]] += 1
                 if row["record_type"] == "image":
                     counts["images_by_target_class"].update(record["target_classes"])
                 counts["candidate_objects_by_target_class"].update(
-                    obj["target_class_name"] for obj in record["objects"] if obj["mapping_status"] == "mapped")
-                counts["dropped_objects"] += sum(obj["mapping_status"] == "dropped" for obj in record["objects"])
+                    obj["target_class_name"] for obj in record["objects"])
                 summary["statuses"][record["annotation_status"]] += 1
                 summary["reasons"].update(record["reasons"])
         summary["records"] = len(rows)
