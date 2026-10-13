@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ConfigError(ValueError):
@@ -158,8 +158,8 @@ def write_report(config, warnings, config_path, *, project_root=PROJECT_ROOT):
     """
     root = project_root.resolve()
     output = artifact_path(config, "config-check.json", root)
-    inputs = [root / config_path, root / "main.py", root / "preprocess/step1_config.py",
-              root / "preprocess/step2_inventory.py", root / "uv.lock"]
+    inputs = [root / config_path, root / "main.py", root / "src/preprocess/step1_config.py",
+              root / "src/preprocess/step2_inventory.py", root / "src/preprocess/step3_remap.py", root / "uv.lock"]
     report = {
         "status": "valid", "source_count": len(config["sources"]), "classes": config["classes"],
         "warnings": warnings, "python": sys.version,

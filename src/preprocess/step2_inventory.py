@@ -66,20 +66,20 @@ def index_source(source, root):
     return local, images, labels, ignored
 
 
-def inspect_label(path, source):
-    """Đọc TXT YOLO, kiểm tra cú pháp, ID lớp và miền giá trị tọa độ/kích thước box.
+def read_label(path, source):
+    """Đọc nhãn gốc và kiểm tra từng box; dùng chung cho kiểm kê và remap.
 
-    Trả về trạng thái nhãn, số dòng hợp lệ theo ID lớp gốc và danh sách lỗi.
-    Phân biệt nhãn thiếu, rỗng và sai; không remap, sửa box hay xác nhận ảnh nền.
+    Giữ nguyên nội dung TXT và số dòng để truy vết; dòng sai chỉ lưu trong nhãn
+    gốc/lỗi, không biến thành box hợp lệ. Không sửa tọa độ hay xác nhận ảnh nền.
     """
-    counts, errors = Counter(), []
+    objects, errors = [], []
     if path is None:
-        return "missing", counts, ["missing YOLO label"]
+        return "missing", None, objects, ["missing YOLO label"]
     try:
-        lines = path.read_text(encoding="utf-8-sig").splitlines()
+        original = path.read_bytes().decode("utf-8-sig")
     except (OSError, UnicodeError) as exc:
-        return "invalid", counts, [f"label read error: {exc}"]
-    for number, line in enumerate(lines, 1):
+        return "invalid", None, objects, [f"label read error: {exc}"]
+    for number, line in enumerate(original.splitlines(), 1):
         if not line.strip():
             continue
         parts = line.split()
@@ -94,10 +94,17 @@ def inspect_label(path, source):
                 raise ValueError("non-finite coordinate")
             if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < width <= 1 and 0 < height <= 1):
                 raise ValueError("invalid normalized coordinate or box size")
-            counts[class_id] += 1
+            objects.append({"line_number": number, "source_class_id": class_id,
+                            "bbox_xywh": [x, y, width, height]})
         except ValueError as exc:
             errors.append(f"label line {number}: {exc}")
-    return ("invalid" if errors else "unreviewed" if counts else "empty_unverified"), counts, errors
+    return ("invalid" if errors else "unreviewed" if objects else "empty_unverified"), original, objects, errors
+
+
+def inspect_label(path, source):
+    """Tổng hợp trạng thái, số box hợp lệ theo lớp và lỗi cho manifest bước 2."""
+    status, _, objects, errors = read_label(path, source)
+    return status, Counter(obj["source_class_id"] for obj in objects), errors
 
 
 def inspect_image(path):
