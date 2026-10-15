@@ -4,6 +4,16 @@ Pipeline tiền xử lý YOLO Detection chỉ dùng **Drinking-waste** và **Gar
 
 Đã triển khai kiểm tra cấu hình, kiểm kê, remap, làm sạch (bước 1–4) và chia train/test/val (bước 6). Đã thêm xuất YOLO (bước 7); duyệt nội dung nhãn và train chưa hoàn tất. Kế hoạch: [dataset-preprocessing-plan.md](docs/plans/dataset-preprocessing-plan.md).
 
+## Train YOLOv8n pretrained
+
+```powershell
+uv run --locked python -B src/training/train.py
+```
+
+`src/training/train.py` đọc `processed-data/data.yaml`, tự tải trọng số pretrained `yolov8n.pt` vào `artifacts/` khi chưa có và huấn luyện với 50 epoch, ảnh 320, batch 8. Chỉnh ba giá trị này trực tiếp trong file; không cần tham số CLI. Đường dẫn được tính từ thư mục gốc project.
+
+Hàm `train()` lưu kết quả trong `artifacts/train/dd/mm/yyyy-model/` theo ngày bắt đầu chạy trên máy, ví dụ `artifacts/train/15/10/2026-model/weights/best.pt`. Dấu `/` tạo thư mục con; trọng số vẫn mang tên `best.pt` và `last.pt`. Các lần chạy cùng ngày được Ultralytics thêm số vào thư mục cuối để giữ kết quả cũ. Train dùng tập train, đánh giá trong quá trình huấn luyện bằng val theo YAML. API theo [tài liệu YOLOv8 của Ultralytics](https://docs.ultralytics.com/models/yolov8/).
+
 ## Nguồn và cấu hình
 
 | Nguồn | Đường dẫn | Lớp đích |
