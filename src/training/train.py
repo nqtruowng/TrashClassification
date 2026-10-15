@@ -10,23 +10,25 @@ from ultralytics import YOLO
 
 
 def train():
-    """Đọc dataset, train pretrained và lưu kết quả theo ngày/tháng/năm-model."""
+    """Đọc dataset, train trên GPU và lưu theo ngày-tháng-năm-tên_model."""
     root = Path(__file__).resolve().parents[2]
     data = root / "processed-data/data.yaml"
     if not data.is_file():
         raise FileNotFoundError(f"Chưa có dataset YOLO: {data}")
 
-    artifacts = root / "artifacts"
-    artifacts.mkdir(exist_ok=True)
-    model = YOLO(str(artifacts / "yolov8n.pt"))  # Tự tải pretrained khi chưa có.
+    model_dir = root / "model"
+    model_dir.mkdir(exist_ok=True)
+    weights = model_dir / "yolov8n.pt"
+    model = YOLO(str(weights))  # Tự tải pretrained khi chưa có.
     model.train(
         data=str(data),
-        epochs=10,       # Số vòng huấn luyện; chỉnh trực tiếp tại đây.
+        epochs=5,       # Số vòng huấn luyện; chỉnh trực tiếp tại đây.
         imgsz=320,      # Kích thước ảnh đầu vào.
-        batch=16,        # Số ảnh mỗi batch.
-        workers=2,      # Đọc dữ liệu trong tiến trình chính, đơn giản trên Windows.
-        project=str(artifacts / "train"),
-        name=date.today().strftime("%d/%m/%Y-model"),  # Ngày bắt đầu train; / tạo thư mục con.
+        batch=64,        # Số ảnh mỗi batch.
+        workers=8,      # Số tiến trình phụ đọc và chuẩn bị dữ liệu.
+        device=0,       # Bắt buộc dùng GPU NVIDIA đầu tiên; báo lỗi nếu CUDA không sẵn sàng.
+        project=str(model_dir),
+        name=f"{date.today():%d-%m-%Y}-{weights.stem}",  # Ví dụ: 15-10-2026-yolov8n.
     )
 
 

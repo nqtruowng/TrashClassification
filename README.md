@@ -10,9 +10,11 @@ Pipeline tiền xử lý YOLO Detection chỉ dùng **Drinking-waste** và **Gar
 uv run --locked python -B src/training/train.py
 ```
 
-`src/training/train.py` đọc `processed-data/data.yaml`, tự tải trọng số pretrained `yolov8n.pt` vào `artifacts/` khi chưa có và huấn luyện với 50 epoch, ảnh 320, batch 8. Chỉnh ba giá trị này trực tiếp trong file; không cần tham số CLI. Đường dẫn được tính từ thư mục gốc project.
+`src/training/train.py` đọc `processed-data/data.yaml`, tự tải trọng số pretrained `yolov8n.pt` vào `model/` tại gốc project khi chưa có và huấn luyện theo các giá trị `epochs`, `imgsz`, `batch`, `workers` trong hàm `train()`. Chỉnh các giá trị này trực tiếp trong file; không cần tham số CLI. Đường dẫn được tính từ thư mục gốc project.
 
-Hàm `train()` lưu kết quả trong `artifacts/train/dd/mm/yyyy-model/` theo ngày bắt đầu chạy trên máy, ví dụ `artifacts/train/15/10/2026-model/weights/best.pt`. Dấu `/` tạo thư mục con; trọng số vẫn mang tên `best.pt` và `last.pt`. Các lần chạy cùng ngày được Ultralytics thêm số vào thư mục cuối để giữ kết quả cũ. Train dùng tập train, đánh giá trong quá trình huấn luyện bằng val theo YAML. API theo [tài liệu YOLOv8 của Ultralytics](https://docs.ultralytics.com/models/yolov8/).
+Train dùng GPU NVIDIA đầu tiên (`device=0`). Trên Windows, `pyproject.toml` và `uv.lock` chọn PyTorch 2.14.1 cùng torchvision 0.29.1 bản CUDA 13.0 từ kho chính thức PyTorch; `uv sync` cài đúng bản GPU. Nếu CUDA không sẵn sàng, lệnh train báo lỗi thay vì tự chuyển sang CPU. Cấu hình này dành cho máy có GPU NVIDIA và driver tương thích.
+
+Hàm `train()` lưu kết quả trong `model/dd-mm-yyyy-tên_model/` theo ngày bắt đầu chạy trên máy, ví dụ `model/15-10-2026-yolov8n/weights/best.pt`. Tên model lấy từ tên file pretrained (bỏ đuôi `.pt`); trọng số kết quả mang tên `best.pt` và `last.pt`. Các lần chạy cùng ngày với cùng model được Ultralytics thêm số vào thư mục cuối để giữ kết quả cũ. Train dùng tập train, đánh giá trong quá trình huấn luyện bằng val theo YAML. API theo [tài liệu YOLOv8 của Ultralytics](https://docs.ultralytics.com/models/yolov8/).
 
 ## Nguồn và cấu hình
 

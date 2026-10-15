@@ -4,6 +4,7 @@ processed-data/
 __pycache__/
 *.py[cod]
 artifacts/
+model/
 AGENTS.md
 tests/
 docs/
