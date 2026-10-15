@@ -2,7 +2,7 @@
 
 Pipeline tiền xử lý YOLO Detection chỉ dùng **Drinking-waste** và **Garbage**, với nhãn bounding box có sẵn. Bộ lớp đích giữ nguyên: `organic, cardboard, glass, metal, paper, plastic` (ID 0–5).
 
-Đã triển khai kiểm tra cấu hình, kiểm kê, remap, làm sạch (bước 1–4) và chia train/test/val (bước 6). Duyệt nhãn, xuất YOLO và train chưa triển khai. Kế hoạch: [dataset-preprocessing-plan.md](docs/plans/dataset-preprocessing-plan.md).
+Đã triển khai kiểm tra cấu hình, kiểm kê, remap, làm sạch (bước 1–4) và chia train/test/val (bước 6). Đã thêm xuất YOLO (bước 7); duyệt nội dung nhãn và train chưa hoàn tất. Kế hoạch: [dataset-preprocessing-plan.md](docs/plans/dataset-preprocessing-plan.md).
 
 ## Nguồn và cấu hình
 
@@ -27,15 +27,16 @@ src/preprocess/
   step2_inventory.py          # Ghép ảnh/nhãn và thống kê
   step3_remap.py              # Ánh xạ lớp, giữ nhãn nguồn và lý do cần duyệt
   step4_clean.py              # Lọc lỗi/trùng và nhãn không hợp lệ, chuẩn hóa ảnh
-  step6_split.py              # Chia theo nhóm và cân đối nguồn/lớp
+  step5_split.py              # Bước 6: chia theo nhóm và cân đối nguồn/lớp
+  step7_export.py             # Xuất và kiểm tra dataset YOLO
 configs/dataset.yaml           # Hai nguồn, lớp, mapping và tỷ lệ chia
 raw-data/                     # Dữ liệu gốc
 artifacts/                    # Báo cáo và dữ liệu trung gian
-processed-data/               # Dataset sẵn sàng train sau bước xuất
+processed-data/               # Chỉ ảnh, TXT và YAML đúng định dạng YOLO
 tests/test_config.py          # Kiểm thử pipeline
 ```
 
-`processed-data/` hiện để trống. Các kết quả trong `artifacts/` là dữ liệu trung gian, chưa phải dataset đã duyệt và xuất YOLO.
+`processed-data/` chỉ chứa ảnh, nhãn TXT và `data.yaml` do bước 7 xuất. Báo cáo, checksum, danh sách loại và dữ liệu trung gian đều nằm trong `artifacts/`. Việc xuất định dạng YOLO không tự xác nhận nhãn đã được duyệt.
 
 ## Chạy
 
@@ -120,7 +121,7 @@ Từ 15.293 ảnh gốc, giữ **15.164 ảnh có nhãn nguồn hợp lệ về 
 | paper | 0 | 1.760 | 1.760 |
 | plastic | 2.442 | 1.463 | 3.905 |
 
-Một ảnh có thể chứa nhiều lớp nên tổng các dòng vượt 15.164. Đầu ra có 15.100 nhóm, 1 ảnh cần lưu bản chuẩn hóa và 80 ảnh đại diện có mâu thuẫn nhãn giữa các bản sao. Nhãn vẫn còn `needs_review`; kết quả chia bước 6 nằm trong manifest riêng, chưa xuất dataset huấn luyện.
+Một ảnh có thể chứa nhiều lớp nên tổng các dòng vượt 15.164. Đầu ra có 15.100 nhóm, 1 ảnh cần lưu bản chuẩn hóa và 80 ảnh đại diện có mâu thuẫn nhãn giữa các bản sao. Nhãn vẫn còn `needs_review`; kết quả chia bước 6 nằm trong manifest riêng; số liệu xuất sau kiểm tra bổ sung ở phần bước 7 bên dưới.
 
 Đã đối chiếu checksum, số giữ/loại, ID duy nhất, hash file/pixel không trùng, đường dẫn ảnh và lớp đích. Manifest/remap/clean chỉ chứa đúng hai nguồn được chọn; mọi ảnh clean có box nguồn và không có nhãn thiếu/rỗng/invalid.
 
@@ -150,11 +151,44 @@ Kết quả trên 15.164 ảnh, seed 42:
 
 Cả ba tập có đủ 6 lớp. Số ảnh đạt đúng mục tiêu sau làm tròn; không giao nhau theo ID, nhóm, hash file hoặc hash pixel trong dữ liệu đã kiểm tra. Tổng 15.100 nhóm được giữ nguyên. Đã đối chiếu toàn bộ ID, nguồn, split gốc, đường dẫn, lớp, số box và checksum đầu ra với clean.
 
+## Xuất YOLO — bước 7
+
+```powershell
+uv run --locked python -B main.py --stage export
+```
+
+`src/preprocess/step7_export.py` lấy split từ manifest bước 6 và box từ clean. Kiểm tra checksum/cấu hình, đối chiếu metadata và kiểm tra không giao nhau theo nhóm/hash giữa các tập trước khi xuất. Tên ảnh và TXT dùng cùng image ID ổn định. Nhãn dùng ID đích 0–5 và tọa độ ứng với đúng ảnh đã chuẩn hóa; không đọc lại TXT gốc để bỏ qua remap hoặc EXIF.
+
+Loại cả ảnh khi có bất kỳ box sai ID, giá trị không hữu hạn, kích thước không dương hoặc cạnh vượt ngoài ảnh (dung sai số thực 1e-9). Không cắt box hoặc xuất riêng các dòng đúng của một nhãn lỗi. Giữ nguyên split của ảnh còn lại, không chia lại sau khi loại.
+
+Ảnh được sao chép vào thư mục tạm trong `artifacts/`, kiểm tra checksum, giải mã đầy đủ, RGB, EXIF, kích thước và hash pixel so với clean. Đọc lại nhãn đã ghi, kiểm tra cặp ảnh/TXT rồi mới đưa dataset vào `processed-data/`. Nếu ảnh nguồn thay đổi, dừng để chạy lại clean/split. Thư mục đích phải chưa có hoặc rỗng; chạy lại khi đã có dữ liệu sẽ dừng để bảo vệ dataset hiện tại.
+
+```text
+processed-data/
+  data.yaml
+  images/train/   images/test/   images/val/
+  labels/train/   labels/test/   labels/val/
+```
+
+`data.yaml` chứa names theo cấu hình và đường dẫn tuyệt đối tới dataset hiện tại; khi di chuyển thư mục cần cập nhật `path`. `artifacts/export-summary.json` chứa checksum từng file, phân bố ảnh/box/lớp/nguồn, trạng thái duyệt và ID/nguồn/đường dẫn/split/lý do của từng ảnh bị loại. Không đặt báo cáo hoặc cache trong dataset.
+
+Kết quả ngày 14/10/2026: **14.992 ảnh và 14.992 TXT**, loại thêm **172 ảnh Drinking-waste chứa 174 box vượt biên**. Loại toàn bộ 185 box thuộc những ảnh này, kể cả 11 box không vượt biên nằm cùng ảnh, để không dùng nhãn thiếu vật thể.
+
+| Tập | Ảnh xuất | Ảnh loại thêm |
+|---|---:|---:|
+| Train | 11.995 | 136 |
+| Test | 1.506 | 11 |
+| Val | 1.491 | 25 |
+
+Đã kiểm tra độc lập toàn bộ 29.985 file sau khi xuất: checksum khớp, ảnh/TXT ghép đủ, box đúng clean và trong biên, mỗi split đủ 6 lớp, không giao nhau theo nhóm/hash. Thư mục tạm của lần xuất đã được dọn.
+
+Trạng thái `needs_review` và `ready_for_training=false` trong clean/split được giữ nguyên. 72 ảnh xuất còn mang cảnh báo mâu thuẫn nhãn giữa các bản sao; thứ tự lớp Drinking-waste vẫn chưa xác minh chính thức. Bước 7 xác nhận tính hợp lệ kỹ thuật của ảnh/TXT; bước duyệt nội dung và bước 8 vẫn cần thực hiện trước khi kết luận chất lượng huấn luyện.
+
 ## Chất lượng nhãn và bước tiếp theo
 
-Có đủ 6 lớp không đồng nghĩa mọi box đã chính xác. Bộ đọc hiện kiểm tra ID, số hữu hạn, tâm trong [0,1] và kích thước trong (0,1]; kiểm tra toàn bộ cạnh box nằm trong ảnh và duyệt nội dung thuộc bước tiếp theo. Cần xác minh ID Drinking-waste, xử lý mâu thuẫn nhãn và duyệt trước khi xuất YOLO; bước 6 chỉ gán split, không tự xác nhận chất lượng nhãn.
+Có đủ 6 lớp không đồng nghĩa mọi box đã chính xác. Bộ đọc hiện kiểm tra ID, số hữu hạn, tâm trong [0,1] và kích thước trong (0,1]; bước 7 bổ sung kiểm tra toàn bộ cạnh box và loại cả ảnh có box vượt biên. Theo yêu cầu thực hiện bước 7, xuất nhãn nguồn hiện có, giữ nguyên trạng thái chưa duyệt. Vẫn cần xác minh ID Drinking-waste, xử lý mâu thuẫn nhãn và duyệt nội dung trước khi xác nhận chất lượng dataset.
 
-Phạm vi hiện tại chỉ dùng nhãn sẵn có; không cần luồng Grounding DINO/BiRefNet hay tạo box cho nguồn classification. Dataset xuất dự kiến chỉ có `images/train`, `images/test`, `images/val`, `labels/train`, `labels/test`, `labels/val` và `data.yaml`.
+Phạm vi hiện tại chỉ dùng nhãn sẵn có; không cần luồng Grounding DINO/BiRefNet hay tạo box cho nguồn classification. Dataset xuất chỉ có `images/train`, `images/test`, `images/val`, `labels/train`, `labels/test`, `labels/val` và `data.yaml`.
 
 ## Thông tin nguồn cục bộ
 
@@ -166,6 +200,6 @@ Drinking-waste không có README/LICENSE/class names được tìm thấy trong 
 uv run --locked python -B -m unittest discover -s tests -v
 ```
 
-36 kiểm thử đạt, gồm hai dạng YOLO, loại nhãn thiếu/rỗng/lỗi, remap, EXIF, lọc trùng, chia theo nhóm, tỷ lệ, tính tái lập và bảo vệ đầu ra khi dữ liệu/cấu hình thay đổi. Không thêm dependency; `uv.lock` giữ nguyên.
+41 kiểm thử đạt, gồm hai dạng YOLO, loại nhãn thiếu/rỗng/lỗi, remap, EXIF, lọc trùng, chia theo nhóm, tỷ lệ, tính tái lập và bảo vệ đầu ra khi dữ liệu/cấu hình thay đổi, xuất YOLO đúng ảnh/box sau EXIF, loại box vượt biên, kiểm tra checksum và không để lại dataset dở dang khi lỗi. Không thêm dependency; `uv.lock` giữ nguyên.
 
 Các file step chỉ xử lý nguồn YOLO. Đã bỏ nhánh classification, bối cảnh thư mục, mapping DROP và ưu tiên nguồn test riêng; bỏ các trường cấu hình `role`, `cap`, `eval` cùng metadata `scene_type` và `mapping_status`. Cấu hình có trường cũ bị từ chối để tránh âm thầm bỏ qua yêu cầu. Manifest cũ không đúng danh sách cột phải được tạo lại bằng inventory trước khi remap.
