@@ -4,6 +4,24 @@ Pipeline tiền xử lý YOLO Detection chỉ dùng **Drinking-waste** và **Gar
 
 Đã triển khai kiểm tra cấu hình, kiểm kê, remap, làm sạch (bước 1–4) và chia train/test/val (bước 6). Đã thêm xuất YOLO (bước 7); duyệt nội dung nhãn và train chưa hoàn tất. Kế hoạch: [dataset-preprocessing-plan.md](docs/plans/dataset-preprocessing-plan.md).
 
+## Train RT-DETR-L pretrained trên Kaggle (2 GPU T4)
+
+Luồng riêng: `src/training/train_rtdetr.py`, dùng `ultralytics.RTDETR("rtdetr-l.pt")` pretrained COCO và đọc trực tiếp dataset YOLO. File `src/training/train.py` vẫn giữ luồng YOLO hiện có.
+
+Mở [notebook Kaggle](notebooks/train_rtdetr_kaggle.ipynb), bật **Internet**, chọn **GPU T4 ×2**, thêm dataset `processed-data/` và dataset code chứa `train_rtdetr.py`. Sửa `DATA_ROOT`, `CODE_ROOT` trong notebook. Notebook cài Ultralytics cùng phiên bản project, dùng PyTorch CUDA có sẵn của Kaggle và viết lại `path` trong bản YAML tại `/kaggle/working`; không sửa dữ liệu Input.
+
+Chạy lần lượt: kiểm tra GPU/dataset → smoke test 1 epoch trên 16 ảnh train/val → train đầy đủ → đánh giá test → dự đoán ảnh → đóng gói kết quả. Baseline: **640 px, 50 epoch, batch tổng 4 (2 ảnh/GPU), 2 workers/GPU, AdamW LR 1e-4, FP32**, early stopping 15 epoch. `device=[0, 1]` để Ultralytics tự khởi chạy DDP. Có thể bật `AMP=True` sau khi kiểm tra ổn định; mặc định tắt vì RT-DETR có thể gặp NaN với AMP. Nếu thiếu VRAM, giảm batch tổng xuống 2 hoặc imgsz xuống 512.
+
+Chạy local trên GPU đầu tiên:
+
+```powershell
+uv run --locked python -B src/training/train_rtdetr.py
+```
+
+`train()` trong file mới nhận `data`, `project`, `device`, `epochs`, `imgsz`, `batch`, `workers`, `amp`, `name`, trả về thư mục run. Kết quả local nằm trong `model/dd-mm-yyyy-rtdetr-l/`; Kaggle nằm trong `/kaggle/working/model/`. Có `weights/best.pt`, `weights/last.pt`, checkpoint mỗi 5 epoch, `args.yaml`, `results.csv`. Run trùng tên được thêm hậu tố số. Chọn model bằng val; chỉ đánh giá test sau khi chốt model. Notebook có bước lưu ZIP để tải về hoặc giữ bằng Save Version.
+
+Nguồn API: [RT-DETR Ultralytics](https://docs.ultralytics.com/models/rtdetr/) và [ghi chú RTDETRTrainer về AMP/deterministic](https://docs.ultralytics.com/reference/models/rtdetr/train/). Cấu hình T4 là baseline khởi đầu, chưa phải benchmark trên Kaggle.
+
 ## Train YOLOv8n pretrained
 
 ```powershell

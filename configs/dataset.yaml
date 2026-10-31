@@ -1,36 +1,95 @@
 schema_version: 1
 # IDs are the positions in this list. Changing the order requires a new release.
-classes: [organic, cardboard, glass, metal, paper, plastic]
+classes: [Biodegradable, recyclable, non_recyclable]
 seed: 42
 split:
   train: 0.8
-  test: 0.1
   val: 0.1
+  test: 0.1
 
-# Split both YOLO sources into train/test/val. Source class names are exact.
+# Sources already enabled for training configuration.
 sources:
-  - id: drinking-waste
-    local_root: raw-data/Images_of_Waste/YOLO_imgs
-    annotation_type: yolo_flat
-    # Consistent with filenames and sampled pairs; official class metadata is still missing.
-    class_names: [AluCan, Glass, HDPEM, PET]
-    class_order_verified: false
-    mapping:
-      AluCan: metal
-      Glass: glass
-      HDPEM: plastic
-      PET: plastic
-
-  - id: garbage-detection
-    local_root: raw-data/Garbage/GARBAGE CLASSIFICATION
+  - id: recyclable-waste
+    local_root: raw-data/Recyclable Waste
     annotation_type: yolo_split
-    native_data_yaml: raw-data/Garbage/GARBAGE CLASSIFICATION/data.yaml
-    class_names: [BIODEGRADABLE, CARDBOARD, GLASS, METAL, PAPER, PLASTIC]
+    native_data_yaml: raw-data/Recyclable Waste/data.yaml
+    class_names: [Non-Recyclable, Recyclable]
     class_order_verified: true
     mapping:
-      BIODEGRADABLE: organic
-      CARDBOARD: cardboard
-      GLASS: glass
-      METAL: metal
-      PAPER: paper
-      PLASTIC: plastic
+      Non-Recyclable: non_recyclable
+      Recyclable: recyclable
+
+  - id: waste-management
+    local_root: raw-data/Waste management
+    annotation_type: yolo_split
+    native_data_yaml: raw-data/Waste management/data.yaml
+    class_names:
+      - Clothes Waste
+      - Food -Biodegradable-
+      - Glass-Non-Biodegradable but Recyclable-
+      - Hazardous Waste
+      - Medical Waste -Non-Biodegradable-
+      - Metal-Non-Biodegradable but Recyclable-
+      - Paper -Biodegradable-
+      - Plastic -Non-Biodegradable but Recyclable-
+      - Plastic-Non-Biodegardable but Recyclable-
+      - Plastic-Non-Biodegradable But Recyclable-
+      - Rubber -Non-Biodegradable but Recyclable-
+    class_order_verified: true
+    exclude_classes:
+      - Hazardous Waste
+      - Medical Waste -Non-Biodegradable-
+    mapping:
+      Clothes Waste: non_recyclable
+      Food -Biodegradable-: Biodegradable
+      Glass-Non-Biodegradable but Recyclable-: recyclable
+      Metal-Non-Biodegradable but Recyclable-: recyclable
+      Paper -Biodegradable-: Biodegradable
+      Plastic -Non-Biodegradable but Recyclable-: recyclable
+      Plastic-Non-Biodegardable but Recyclable-: recyclable
+      Plastic-Non-Biodegradable But Recyclable-: recyclable
+      Rubber -Non-Biodegradable but Recyclable-: recyclable
+
+  - id: waste-management-recycling-v1
+    local_root: raw-data/Waste Management- Recyclingv1
+    annotation_type: yolo_split
+    native_data_yaml: raw-data/Waste Management- Recyclingv1/data.yaml
+    class_names: [Biodegradable waste, non-recyclable waste, recyclable waste]
+    class_order_verified: true
+    mapping:
+      Biodegradable waste: Biodegradable
+      non-recyclable waste: non_recyclable
+      recyclable waste: recyclable
+
+  - id: waste-detection
+    local_root: raw-data/Waste Detection
+    annotation_type: yolo_split
+    native_data_yaml: raw-data/Waste Detection/data.yaml
+    class_names:
+      - Hazardous - Electronics
+      - Hazardous - Lab and Medical
+      - Kitchen Waste - Foods
+      - Kitchen Waste - Fruits
+      - Kitchen Waste - Vegetables
+      - Other - Clothing
+      - Other - Wooden
+      - Recyclable - Glass and Ceramic
+      - Recyclable - Metal
+      - Recyclable - Paper
+      - Recyclable - Plastic
+      - Recyclable - Rubber
+    class_order_verified: true
+    exclude_classes:
+      - Hazardous - Electronics
+      - Hazardous - Lab and Medical
+    mapping:
+      Kitchen Waste - Foods: Biodegradable
+      Kitchen Waste - Fruits: Biodegradable
+      Kitchen Waste - Vegetables: Biodegradable
+      Other - Clothing: non_recyclable
+      Other - Wooden: Biodegradable
+      Recyclable - Glass and Ceramic: recyclable
+      Recyclable - Metal: recyclable
+      Recyclable - Paper: recyclable
+      Recyclable - Plastic: recyclable
+      Recyclable - Rubber: recyclable

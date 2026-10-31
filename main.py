@@ -11,7 +11,7 @@ from src.preprocess.step2_inventory import run_inventory
 from src.preprocess.step3_remap import run_remap
 from src.preprocess.step4_clean import run_clean
 from src.preprocess.step5_split import run_split
-from preprocess.step6_export import run_export
+from src.preprocess.step6_export import run_export
 
 
 def main(argv=None):

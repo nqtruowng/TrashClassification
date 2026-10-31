@@ -93,7 +93,7 @@ def load_configuration(config_path="configs/dataset.yaml", *, project_root=PROJE
     for index, source in enumerate(config["sources"]):
         loc = f"config.sources[{index}]"
         fields(source, loc, ("id", "local_root", "annotation_type", "mapping", "class_names", "class_order_verified"),
-               ("native_data_yaml",))
+               ("native_data_yaml", "exclude_classes"))
         source_id = source["id"]
         require(isinstance(source_id, str) and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", source_id), f"{loc}.id", "invalid source ID")
         require(source_id not in ids, f"{loc}.id", "duplicate source ID")
@@ -119,7 +119,13 @@ def load_configuration(config_path="configs/dataset.yaml", *, project_root=PROJE
                 native_names = [native_names[k] for k in range(len(source_names))]
             require(native_names == source_names, f"{loc}.class_names", "order/names differ from native data.yaml")
             require("nc" not in native or type(native["nc"]) is int and native["nc"] == len(source_names), f"{loc}.native_data_yaml.nc", "incorrect class count")
-        fields(source["mapping"], f"{loc}.mapping", source_names)
+        excluded_names = source.get("exclude_classes", [])
+        require(isinstance(excluded_names, list)
+                and all(isinstance(name, str) and name in source_names for name in excluded_names),
+                f"{loc}.exclude_classes", "expected unique source class names")
+        require(len(excluded_names) == len(set(excluded_names)),
+                f"{loc}.exclude_classes", "source class names must be unique")
+        fields(source["mapping"], f"{loc}.mapping", [name for name in source_names if name not in excluded_names])
         for name, target in source["mapping"].items():
             require(isinstance(target, str) and target in classes, f"{loc}.mapping.{name}", f"unknown target class {target!r}")
     return config, warnings

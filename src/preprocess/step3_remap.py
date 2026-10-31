@@ -1,6 +1,7 @@
 """Bước 3: chuẩn hóa lớp, giữ nhãn gốc và phân luồng xử lý trước khi làm sạch."""
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 import csv
 import hashlib
 import json
@@ -28,6 +29,8 @@ def audit_class_order(rows, sources):
     audit = {sid: {"class_names": s["class_names"], "matched": 0, "unmatched_filename": 0,
                    "without_valid_objects": 0, "examples": {}}
              for sid, s in sources.items() if not s["class_order_verified"]}
+    if not audit:
+        return audit
     for row in rows:
         source = sources[row["source_dataset"]]
         if row["record_type"] != "image":
@@ -61,6 +64,7 @@ def remap_record(row, source, classes, root):
     record = {**row, "original_annotation_status": row["annotation_status"],
               "source_classes": json.loads(row["source_classes"] or "[]"),
               "source_class_ids": json.loads(row["source_class_ids"] or "[]"),
+              "excluded_source_classes": [],
               "errors": json.loads(row["errors"] or "[]"), "objects": [],
               "original_label": None, "target_classes": [], "target_class_ids": [],
               "reasons": [], "ready_for_training": False}
@@ -80,11 +84,19 @@ def remap_record(row, source, classes, root):
                 and sorted({obj["source_class_id"] for obj in objects}) == record["source_class_ids"],
                 row["label_path"] or row["original_path"], "labels changed since inventory; rerun inventory")
     record["errors"] = list(dict.fromkeys(record["errors"] + errors))
+    excluded_names = set(source.get("exclude_classes", []))
+    kept_objects, excluded_ids = [], set()
     for obj in objects:
         name = source["class_names"][obj["source_class_id"]]
+        if name in excluded_names:
+            excluded_ids.add(obj["source_class_id"])
+            continue
         target = source["mapping"][name]
         obj.update(source_class_name=name, target_class_name=target, target_class_id=classes.index(target))
+        kept_objects.append(obj)
+    objects = kept_objects
     record["objects"] = objects
+    record["excluded_source_classes"] = [source["class_names"][i] for i in sorted(excluded_ids)]
     targets = sorted({obj["target_class_name"] for obj in objects}, key=classes.index)
     status = "needs_review"
     if label_status in ("missing", "empty_unverified"):
@@ -99,12 +111,20 @@ def remap_record(row, source, classes, root):
     if row["record_type"] == "orphan_label" or row["image_status"] == "decode_error":
         status = "excluded"
         reasons.append("orphan_label" if row["record_type"] == "orphan_label" else "image_decode_error")
+    elif excluded_ids and not objects:
+        status = "excluded"
+        reasons.append("only_excluded_source_classes")
     elif row["image_status"] == "decode_warning":
         reasons.append("image_decode_warning")
         status = "needs_review"
     record.update(annotation_status=status, target_classes=targets,
                   target_class_ids=[classes.index(name) for name in targets])
     return record
+
+
+def remap_entry(arguments):
+    """Remap one manifest row for the bounded worker pool."""
+    return remap_record(*arguments)
 
 
 def run_remap(config, warnings, *, project_root=PROJECT_ROOT):
@@ -145,21 +165,29 @@ def run_remap(config, warnings, *, project_root=PROJECT_ROOT):
     with tempfile.TemporaryDirectory(prefix=".remap-", dir=output.parent) as temporary:
         temp_output = Path(temporary) / output.name
         with temp_output.open("w", encoding="utf-8", newline="\n") as stream:
-            for row in rows:
-                source = sources[row["source_dataset"]]
-                record = remap_record(row, source, config["classes"], root)
-                stream.write(json.dumps(record, ensure_ascii=False) + "\n")
-                counts = summary["sources"].setdefault(source["id"], {
-                    "images": 0, "orphan_labels": 0, "statuses": Counter(),
-                    "images_by_target_class": Counter(), "candidate_objects_by_target_class": Counter()})
-                counts["images" if row["record_type"] == "image" else "orphan_labels"] += 1
-                counts["statuses"][record["annotation_status"]] += 1
-                if row["record_type"] == "image":
-                    counts["images_by_target_class"].update(record["target_classes"])
-                counts["candidate_objects_by_target_class"].update(
-                    obj["target_class_name"] for obj in record["objects"])
-                summary["statuses"][record["annotation_status"]] += 1
-                summary["reasons"].update(record["reasons"])
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                for start in range(0, len(rows), 512):
+                    batch = rows[start:start + 512]
+                    records = executor.map(
+                        remap_entry,
+                        ((row, sources[row["source_dataset"]], config["classes"], root) for row in batch))
+                    for row, record in zip(batch, records):
+                        source = sources[row["source_dataset"]]
+                        stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        counts = summary["sources"].setdefault(source["id"], {
+                            "images": 0, "orphan_labels": 0, "statuses": Counter(),
+                            "images_by_target_class": Counter(), "candidate_objects_by_target_class": Counter()})
+                        counts["images" if row["record_type"] == "image" else "orphan_labels"] += 1
+                        counts["statuses"][record["annotation_status"]] += 1
+                        if row["record_type"] == "image":
+                            counts["images_by_target_class"].update(record["target_classes"])
+                        counts["candidate_objects_by_target_class"].update(
+                            obj["target_class_name"] for obj in record["objects"])
+                        summary["statuses"][record["annotation_status"]] += 1
+                        summary["reasons"].update(record["reasons"])
+                    completed = start + len(batch)
+                    if completed % 4096 < 512 or completed == len(rows):
+                        print(f"Remapping: {completed}/{len(rows)}", flush=True)
         summary["records"] = len(rows)
         summary["annotations_sha256"] = hashlib.sha256(temp_output.read_bytes()).hexdigest()
         temp_summary = Path(temporary) / summary_path.name

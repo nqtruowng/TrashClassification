@@ -2,6 +2,7 @@
 
 import csv
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import math
@@ -41,7 +42,9 @@ def index_source(source, root):
             ignored += 1
             continue
         is_image = suffix in IMAGE_SUFFIXES
-        is_label = suffix == ".txt"
+        is_label = suffix == ".txt" and (
+            source["annotation_type"] != "yolo_split"
+            or len(parts) >= 3 and parts[0] in ("train", "val", "valid", "test") and parts[1] == "labels")
         if not (is_image or is_label):
             ignored += 1
             continue
@@ -61,7 +64,7 @@ def index_source(source, root):
 
 
 def read_label(path, source):
-    """Đọc nhãn gốc và kiểm tra từng box; dùng chung cho kiểm kê và remap.
+    """Đọc nhãn YOLO box hoặc polygon, chuyển polygon thành box bao quanh.
 
     Giữ nguyên nội dung TXT và số dòng để truy vết; dòng sai chỉ lưu trong nhãn
     gốc/lỗi, không biến thành box hợp lệ. Không sửa tọa độ hay xác nhận ảnh nền.
@@ -78,16 +81,29 @@ def read_label(path, source):
             continue
         parts = line.split()
         try:
-            if len(parts) != 5 or not re.fullmatch(r"[0-9]+", parts[0]):
-                raise ValueError("expected class_id and four coordinates")
+            if not parts or not re.fullmatch(r"[0-9]+", parts[0]):
+                raise ValueError("expected a numeric class_id")
             class_id = int(parts[0])
             if not 0 <= class_id < len(source["class_names"]):
                 raise ValueError("source class ID out of range")
-            x, y, width, height = map(float, parts[1:])
-            if not all(math.isfinite(v) for v in (x, y, width, height)):
-                raise ValueError("non-finite coordinate")
-            if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < width <= 1 and 0 < height <= 1):
-                raise ValueError("invalid normalized coordinate or box size")
+            coordinates = list(map(float, parts[1:]))
+            if len(coordinates) == 4:
+                x, y, width, height = coordinates
+                if not all(math.isfinite(v) for v in coordinates):
+                    raise ValueError("non-finite coordinate")
+                if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < width <= 1 and 0 < height <= 1):
+                    raise ValueError("invalid normalized coordinate or box size")
+            elif len(coordinates) >= 6 and len(coordinates) % 2 == 0:
+                if not all(math.isfinite(v) and 0 <= v <= 1 for v in coordinates):
+                    raise ValueError("invalid normalized polygon coordinate")
+                xs, ys = coordinates[0::2], coordinates[1::2]
+                left, right, top, bottom = min(xs), max(xs), min(ys), max(ys)
+                x, y = (left + right) / 2, (top + bottom) / 2
+                width, height = right - left, bottom - top
+                if width <= 0 or height <= 0:
+                    raise ValueError("polygon has zero area")
+            else:
+                raise ValueError("expected class_id with four box coordinates or polygon points")
             objects.append({"line_number": number, "source_class_id": class_id,
                             "bbox_xywh": [x, y, width, height]})
         except ValueError as exc:
@@ -125,6 +141,14 @@ def inspect_image(path):
     return metadata, status, errors
 
 
+def inspect_inventory_entry(item):
+    """Inspect one image and its YOLO label while retaining the stable lookup key."""
+    (key, (path, _)), label, source = item
+    image_metadata = inspect_image(path)
+    label_metadata = inspect_label(label, source)
+    return key, (*image_metadata, *label_metadata)
+
+
 def run_inventory(config, warnings, *, project_root=PROJECT_ROOT):
     """Điều phối bước 2 cho mọi nguồn: ghép nhãn, đọc ảnh và tổng hợp thống kê.
 
@@ -149,19 +173,30 @@ def run_inventory(config, warnings, *, project_root=PROJECT_ROOT):
             writer.writeheader()
             for source, (local, images, labels, ignored) in indexed:
                 print(f"Inventory {source['id']}: {len(images)} images...", flush=True)
+                ordered_images = sorted(images.items())
+                image_metadata = {}
+                with ThreadPoolExecutor(max_workers=8) as executor:
+                    for start in range(0, len(ordered_images), 512):
+                        batch = ordered_images[start:start + 512]
+                        image_metadata.update(executor.map(
+                            inspect_inventory_entry,
+                            ((entry, labels.get(entry[0]), source) for entry in batch)))
+                        completed = start + len(batch)
+                        if completed % 4096 < 512 or completed == len(ordered_images):
+                            print(f"  {source['id']}: inspected {completed}/{len(images)}", flush=True)
                 counts = Counter({key: 0 for key in ("images", "paired_labels", "missing_labels", "empty_labels",
                     "invalid_labels", "orphan_labels", "decode_errors", "decode_warnings")})
                 classes, objects, splits = Counter(), Counter(), Counter()
-                for number, (key, (path, split)) in enumerate(sorted(images.items()), 1):
+                for number, (key, (path, split)) in enumerate(ordered_images, 1):
                     relative = path.relative_to(local).as_posix()
                     label = labels.get(key)
                     row = dict.fromkeys(MANIFEST_FIELDS, "")
                     row.update(record_type="image", image_id=hashlib.sha256(f"{source['id']}\0{relative}".encode()).hexdigest(),
                                source_dataset=source["id"], original_path=relative, original_split=split,
                                annotation_type=source["annotation_type"])
-                    metadata, row["image_status"], errors = inspect_image(path)
+                    (metadata, row["image_status"], errors,
+                     status, object_counts, label_errors) = image_metadata[key]
                     row.update(metadata)
-                    status, object_counts, label_errors = inspect_label(label, source)
                     row.update(annotation_status=status, label_path=label.relative_to(local).as_posix() if label else "")
                     errors.extend(label_errors)
                     counts["paired_labels" if label else "missing_labels"] += 1

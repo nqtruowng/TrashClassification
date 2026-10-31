@@ -43,6 +43,9 @@ def inspect_for_cleaning(row, local, images_dir):
     if row["record_type"] != "image" or row["image_status"] == "decode_error":
         result.update(decision="remove", reasons=["invalid_image" if row["record_type"] == "image" else "orphan_label"])
         return result
+    if row.get("annotation_status") == "excluded" or not row.get("objects"):
+        result.update(decision="remove", reasons=row.get("reasons") or ["no_trainable_objects"])
+        return result
     path = source_path(local, row["original_path"])
     try:
         data = path.read_bytes()

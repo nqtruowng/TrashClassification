@@ -1,6 +1,7 @@
 """Bước 7: xuất ảnh và nhãn YOLO hợp lệ, giữ nguyên split và trạng thái duyệt."""
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 import csv
 import hashlib
 import io
@@ -9,9 +10,10 @@ import math
 from pathlib import Path
 import re
 import shutil
+import struct
 import tempfile
 
-from PIL import Image
+from PIL import Image, PngImagePlugin
 import yaml
 
 from .step1_config import PROJECT_ROOT, artifact_path, require
@@ -37,6 +39,98 @@ def label_errors(objects, class_count):
         elif min(x-width/2, y-height/2) < -1e-9 or max(x+width/2, y+height/2) > 1+1e-9:
             errors.append(f"box {index}: edges_outside_image")
     return errors
+
+
+def strip_png_iccp_profile(path):
+    """Remove embedded ICC chunks without decoding or changing PNG pixels."""
+    signature = b"\x89PNG\r\n\x1a\n"
+    temporary = None
+    removed = False
+    try:
+        with path.open("rb") as source:
+            if source.read(8) != signature:
+                return False
+            with tempfile.NamedTemporaryFile(prefix=f".{path.stem}-", suffix=".png",
+                                             dir=path.parent, delete=False) as target:
+                temporary = Path(target.name)
+                target.write(signature)
+                while True:
+                    header = source.read(8)
+                    if not header:
+                        break
+                    require(len(header) == 8, path, "truncated PNG chunk header")
+                    length = struct.unpack(">I", header[:4])[0]
+                    chunk_type = header[4:]
+                    if chunk_type == b"iCCP":
+                        source.seek(length + 4, 1)  # Skip profile payload and CRC.
+                        removed = True
+                    else:
+                        target.write(header)
+                        shutil.copyfileobj(_LimitedReader(source, length + 4), target)
+                    if chunk_type == b"IEND":
+                        break
+        if removed:
+            temporary.replace(path)
+        else:
+            temporary.unlink()
+        return removed
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+
+
+class _LimitedReader:
+    """Copy at most N bytes from a stream, raising on truncated PNG chunks."""
+
+    def __init__(self, stream, remaining):
+        self.stream = stream
+        self.remaining = remaining
+
+    def read(self, size=-1):
+        if self.remaining == 0:
+            return b""
+        size = self.remaining if size < 0 else min(size, self.remaining)
+        chunk = self.stream.read(size)
+        require(bool(chunk), "PNG", "truncated PNG chunk")
+        self.remaining -= len(chunk)
+        return chunk
+
+
+def export_row(row, sources, root, stage, class_names):
+    """Copy and verify one image/label pair into its already-assigned split."""
+    image_id, split = row["image_id"], row["split"]
+    require(row["source_dataset"] in sources, image_id, "unknown source")
+    original = (sources[row["source_dataset"]] / row["original_path"]).resolve()
+    source = (root / row["image_path"]).resolve()
+    normalized = root / "artifacts/clean/images" / f"{image_id}.png"
+    require(original.is_relative_to(sources[row["source_dataset"]])
+            and (source == original or source == normalized.resolve()), image_id, "unexpected image path")
+    image_path = stage / "images" / split / f"{image_id}{source.suffix.lower()}"
+    label_path = stage / "labels" / split / f"{image_id}.txt"
+    shutil.copyfile(source, image_path)
+    source_hash = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    if source == original:
+        require(source_hash == row["file_sha256"], image_id, "source image changed; rerun clean and split")
+    if image_path.suffix.lower() == ".png":
+        strip_png_iccp_profile(image_path)
+    image_hash = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    with Image.open(image_path) as image:
+        image.load()
+        require(image.mode == "RGB" and image.getexif().get(274, 1) == 1
+                and image.size == (row["width"], row["height"]), image_id, "image is not normalized")
+        pixel_hash = hashlib.sha256(f"RGB:{image.width}:{image.height}:".encode() + image.tobytes()).hexdigest()
+        require(pixel_hash == row["pixel_sha256"], image_id, "image pixels changed; rerun clean and split")
+    label = "".join(str(obj["target_class_id"]) + " " + " ".join(format(v, ".17g") for v in obj["bbox_xywh"])
+                    + "\n" for obj in row["objects"])
+    label_path.write_text(label, encoding="utf-8", newline="\n")
+    parsed = [{"target_class_id": int(parts[0]), "bbox_xywh": list(map(float, parts[1:]))}
+              for parts in (line.split() for line in label_path.read_text(encoding="utf-8").splitlines())]
+    require(len(parsed) == len(row["objects"]) and not label_errors(parsed, len(class_names)),
+            image_id, "exported label is invalid")
+    return {
+        image_path.relative_to(stage).as_posix(): image_hash,
+        label_path.relative_to(stage).as_posix(): hashlib.sha256(label_path.read_bytes()).hexdigest(),
+    }
 
 
 def load_export_rows(config, root):
@@ -92,6 +186,8 @@ def run_export(config, warnings, *, project_root=PROJECT_ROOT):
     dữ liệu được bảo vệ, không ghi đè hoặc trộn thêm file của lần chạy khác.
     """
     root = project_root.resolve()
+    # Some valid source PNGs contain ICC profiles larger than Pillow's 1 MiB default.
+    PngImagePlugin.MAX_TEXT_CHUNK = max(PngImagePlugin.MAX_TEXT_CHUNK, 16 * 1024 * 1024)
     output = root / "processed-data"
     require(output.resolve() == output and not output.is_symlink(), "export", "unsafe output directory")
     require(not output.exists() or output.is_dir() and not any(output.iterdir()),
@@ -137,40 +233,19 @@ def run_export(config, warnings, *, project_root=PROJECT_ROOT):
         for kind in ("images", "labels"):
             for split in SPLITS:
                 (stage / kind / split).mkdir(parents=True)
-        for index, row in enumerate(kept, 1):
-            image_id, split = row["image_id"], row["split"]
-            require(row["source_dataset"] in sources, image_id, "unknown source")
-            original = (sources[row["source_dataset"]] / row["original_path"]).resolve()
-            source = (root / row["image_path"]).resolve()
-            normalized = root / "artifacts/clean/images" / f"{image_id}.png"
-            require(original.is_relative_to(sources[row["source_dataset"]])
-                    and (source == original or source == normalized.resolve()), image_id, "unexpected image path")
-            image_path = stage / "images" / split / f"{image_id}{source.suffix.lower()}"
-            label_path = stage / "labels" / split / f"{image_id}.txt"
-            shutil.copyfile(source, image_path)
-            image_hash = hashlib.sha256(image_path.read_bytes()).hexdigest()
-            if source == original:
-                require(image_hash == row["file_sha256"], image_id, "source image changed; rerun clean and split")
-            with Image.open(image_path) as image:
-                image.load()
-                require(image.mode == "RGB" and image.getexif().get(274, 1) == 1
-                        and image.size == (row["width"], row["height"]), image_id, "image is not normalized")
-                pixel_hash = hashlib.sha256(f"RGB:{image.width}:{image.height}:".encode() + image.tobytes()).hexdigest()
-                require(pixel_hash == row["pixel_sha256"], image_id, "image pixels changed; rerun clean and split")
-            label = "".join(str(obj["target_class_id"]) + " " + " ".join(format(v, ".17g") for v in obj["bbox_xywh"])
-                            + "\n" for obj in row["objects"])
-            label_path.write_text(label, encoding="utf-8", newline="\n")
-            # Đọc lại TXT để kiểm tra chính nội dung sẽ dùng huấn luyện.
-            parsed = [{"target_class_id": int(parts[0]), "bbox_xywh": list(map(float, parts[1:]))}
-                      for parts in (line.split() for line in label_path.read_text(encoding="utf-8").splitlines())]
-            require(len(parsed) == len(row["objects"]) and not label_errors(parsed, len(config["classes"])),
-                    image_id, "exported label is invalid")
-            summary["files_sha256"][image_path.relative_to(stage).as_posix()] = image_hash
-            summary["files_sha256"][label_path.relative_to(stage).as_posix()] = hashlib.sha256(label_path.read_bytes()).hexdigest()
-            if index % 1000 == 0:
-                print(f"Export checked {index}/{len(kept)} images", flush=True)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            for start in range(0, len(kept), 256):
+                batch = kept[start:start + 256]
+                for file_hashes in executor.map(
+                        lambda row: export_row(row, sources, root, stage, config["classes"]), batch):
+                    summary["files_sha256"].update(file_hashes)
+                completed = start + len(batch)
+                if completed % 1000 < 256 or completed == len(kept):
+                    print(f"Export checked {completed}/{len(kept)} images", flush=True)
         data_yaml = stage / "data.yaml"
-        data_yaml.write_text(yaml.safe_dump({"path": output.as_posix(), **{s: f"images/{s}" for s in SPLITS},
+        # Without an absolute ``path``, Ultralytics uses this data.yaml's parent
+        # directory as the dataset root, so the exported dataset stays portable.
+        data_yaml.write_text(yaml.safe_dump({**{s: f"images/{s}" for s in SPLITS},
                                            "nc": len(config["classes"]), "names": config["classes"]},
                                           sort_keys=False, allow_unicode=True), encoding="utf-8")
         summary["files_sha256"]["data.yaml"] = hashlib.sha256(data_yaml.read_bytes()).hexdigest()
