@@ -1,6 +1,9 @@
 .venv/
+node_modules/
+dist/
 raw-data/
 processed-data/
+processed-data-20k/
 __pycache__/
 *.py[cod]
 artifacts/

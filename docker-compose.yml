@@ -1,0 +1,24 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      MODEL_PATH: /models/best.pt
+    volumes:
+      - ./model/31-10-2026-yolo26n/weights/best.pt:/models/best.pt:ro
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
