@@ -2,15 +2,20 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile.backend
+      dockerfile: backend/Dockerfile
     environment:
-      HOST: 0.0.0.0
-      PORT: 8000
       MODEL_PATH: /models/best.pt
+      MAX_IMAGE_BYTES: 20971520
     volumes:
-      - ./model/31-10-2026-yolo26n/weights/best.pt:/models/best.pt:ro
-    expose:
-      - "8000"
+      - ${MODEL_FILE:-./model/11-11-2026-yolo26n/weights/best.pt}:/models/best.pt:ro
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
 
   frontend:
@@ -18,7 +23,8 @@ services:
       context: ./src/frontend
       dockerfile: Dockerfile
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "8080:80"
     restart: unless-stopped
