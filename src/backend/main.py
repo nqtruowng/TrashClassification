@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from ultralytics import YOLO
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = Path(os.environ.get(
     "MODEL_PATH",
     str(ROOT / "model" / "11-11-2026-yolo26n" / "weights" / "best.pt"),
@@ -27,7 +27,7 @@ def category_for(class_name: str) -> tuple[str, str, str]:
     if "recyclable" in name and "non_recyclable" not in name:
         return "recycle", "Tái chế được", "Làm sạch vật dụng và bỏ vào thùng tái chế."
     if "non_recyclable" in name:
-        return "other", "Không tái chế", "Bỏ vào thùng rác còn lại. Kiểm tra hướng dẫn tại địa phương."
+        return "non_recyclable", "Không tái chế được", "Bỏ vào thùng rác còn lại. Kiểm tra hướng dẫn tại địa phương."
     return "other", class_name, "Kiểm tra hướng dẫn phân loại rác tại địa phương."
 
 
@@ -80,7 +80,12 @@ async def predict(request: Request):
     result = await run_in_threadpool(request.app.state.model.predict, image, imgsz=640, conf=0.25, verbose=False)
     prediction = result[0]
     if prediction.boxes is None or len(prediction.boxes) == 0:
-        return {"found": False, "message": "Model không phát hiện vật thể với ngưỡng tin cậy hiện tại."}
+        return {
+            "found": False,
+            "message": "Model không phát hiện vật thể với ngưỡng tin cậy hiện tại.",
+            "image_size": [image.width, image.height],
+            "detections": [],
+        }
 
     boxes = prediction.boxes
     confidences = boxes.conf.cpu().tolist()

@@ -23,6 +23,14 @@ function formatTime(date) {
   return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
+function categoryIcon(category) {
+  if (category === "recycle") return "recycle";
+  if (category === "organic") return "organic";
+  return "other";
+}
+
+const detectionColors = { recycle: "#73d18a", non_recyclable: "#ef8a79", organic: "#c4e66b", other: "#f0bd62" };
+
 function App() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -30,11 +38,12 @@ function App() {
   const [streaming, setStreaming] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
+  const [resultImageUrl, setResultImageUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
-  const [counts, setCounts] = useState({ recycle: 0, organic: 0, other: 0 });
+  const [counts, setCounts] = useState({ recycle: 0, non_recyclable: 0, organic: 0, other: 0 });
   const [toast, setToast] = useState("");
   const [cameraError, setCameraError] = useState("");
 
@@ -45,6 +54,10 @@ function App() {
   useEffect(() => () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
   }, [previewUrl]);
+
+  useEffect(() => () => {
+    if (resultImageUrl) URL.revokeObjectURL(resultImageUrl);
+  }, [resultImageUrl]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -61,6 +74,8 @@ function App() {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       setStreaming(false);
+      setResult(null);
+      setResultImageUrl("");
       setCameraError("");
       return;
     }
@@ -69,6 +84,8 @@ function App() {
       streamRef.current = stream;
       setSelectedFile(null);
       setPreviewUrl("");
+      setResult(null);
+      setResultImageUrl("");
       setCameraError("");
       setStreaming(true);
     } catch {
@@ -84,6 +101,8 @@ function App() {
     setStreaming(false);
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
+    setResult(null);
+    setResultImageUrl("");
     setCameraError("");
     setError("");
     event.target.value = "";
@@ -101,6 +120,8 @@ function App() {
 
   async function analyze() {
     setError("");
+    setResult(null);
+    setResultImageUrl("");
     let image = selectedFile;
     if (streamRef.current) image = await captureFrame();
     if (!image) {
@@ -117,6 +138,7 @@ function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Không thể chạy nhận diện.");
+      setResultImageUrl(URL.createObjectURL(image));
       if (!data.found) {
         setResult({ found: false, message: data.message });
         setToast("Model chưa phát hiện vật thể.");
@@ -143,7 +165,7 @@ function App() {
 
   function clearHistory() {
     setHistory([]);
-    setCounts({ recycle: 0, organic: 0, other: 0 });
+    setCounts({ recycle: 0, non_recyclable: 0, organic: 0, other: 0 });
   }
 
   const best = result?.found ? result.detections[0] : null;
@@ -174,9 +196,25 @@ function App() {
           <article className="panel camera-panel">
             <div className="panel-heading"><div><h2>Camera nhận diện</h2><p>Căn vật thể vào giữa khung hình</p></div><span className={`live-tag ${streaming ? "is-live" : ""}`}><i />{streaming ? "ĐANG QUAY" : "SẴN SÀNG"}</span></div>
             <div className="camera-stage">
-              {streaming && <video ref={videoRef} className="camera-media" autoPlay playsInline muted />}
-              {!streaming && previewUrl && <img className="camera-media" src={previewUrl} alt="Ảnh đã chọn để nhận diện" />}
-              {!streaming && !previewUrl && <div className="camera-placeholder"><span className="placeholder-icon"><Icon name="camera" size={26} /></span><strong>Camera đang chờ</strong><span>Bật camera hoặc tải ảnh lên để bắt đầu</span></div>}
+              {resultImageUrl && <>
+                <img className="camera-media result-media" src={resultImageUrl} alt="Ảnh kết quả nhận diện" />
+                {result?.found && result.image_size?.length === 2 && <svg className="detection-overlay" viewBox={`0 0 ${result.image_size[0]} ${result.image_size[1]}`} preserveAspectRatio="xMidYMid meet" aria-label="Khung nhận diện">
+                  {result.detections.map((detection, index) => {
+                    const [x1, y1, x2, y2] = detection.box || [];
+                    if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+                    const color = detectionColors[detection.category] || detectionColors.other;
+                    const label = `${detection.label} ${Math.round(detection.confidence * 100)}%`;
+                    const fontSize = Math.max(14, Math.min(result.image_size[0], result.image_size[1]) * 0.035);
+                    return <g key={`${detection.class_name}-${index}`}>
+                      <rect x={x1} y={y1} width={Math.max(0, x2 - x1)} height={Math.max(0, y2 - y1)} fill={`${color}20`} stroke={color} strokeWidth={Math.max(3, fontSize / 7)} />
+                      <text x={x1} y={Math.max(fontSize, y1 - 6)} fill={color} stroke="#14231a" strokeWidth={fontSize / 5} paintOrder="stroke" fontSize={fontSize} fontWeight="700">{label}</text>
+                    </g>;
+                  })}
+                </svg>}
+              </>}
+              {!resultImageUrl && streaming && <video ref={videoRef} className="camera-media" autoPlay playsInline muted />}
+              {!resultImageUrl && !streaming && previewUrl && <img className="camera-media" src={previewUrl} alt="Ảnh đã chọn để nhận diện" />}
+              {!resultImageUrl && !streaming && !previewUrl && <div className="camera-placeholder"><span className="placeholder-icon"><Icon name="camera" size={26} /></span><strong>Camera đang chờ</strong><span>Bật camera hoặc tải ảnh lên để bắt đầu</span></div>}
               <span className="frame-corner top-left" /><span className="frame-corner bottom-right" />
               <span className="camera-hint">Ảnh đầu vào · 640 px</span>
               {streaming && <span className="camera-live"><i /> LIVE</span>}
@@ -198,7 +236,7 @@ function App() {
               <div className="panel-heading result-heading"><div><h2>Kết quả nhận diện</h2></div><span className={`result-state ${best ? "state-success" : ""}`}>{loading ? "Đang chạy model" : best ? `${result.detections.length} vật thể` : result ? "Không phát hiện" : "Chưa phân tích"}</span></div>
               {!best && <div className="result-placeholder"><Icon name="spark" size={25} /><p>{result?.message || "Kết quả và hướng dẫn xử lý sẽ hiển thị ở đây."}</p></div>}
               {best && <div className="result-content">
-                <div className="prediction-title"><span className={`category-icon category-${best.category}`}><Icon name={best.category === "recycle" ? "recycle" : best.category === "organic" ? "organic" : "other"} size={21} /></span><div><small>Loại rác được dự đoán</small><strong>{best.label}</strong></div></div>
+                <div className="prediction-title"><span className={`category-icon category-${best.category}`}><Icon name={categoryIcon(best.category)} size={21} /></span><div><small>Loại rác được dự đoán</small><strong>{best.label}</strong></div></div>
                 <div className="confidence-block"><div className="confidence-label"><span>Độ tin cậy</span><strong>{confidence}%</strong></div><div className="meter"><span style={{ width: `${confidence}%` }} /></div></div>
                 <div className="advice"><Icon name="check" size={17} /><p><strong>Gợi ý xử lý:</strong> {best.advice}{confidence < 50 && " Độ tin cậy thấp, hãy thử chụp lại rõ hơn."}</p></div>
                 {result.detections.length > 1 && <div className="extra-detections">Còn {result.detections.length - 1} vật thể khác trong khung hình.</div>}
@@ -209,6 +247,7 @@ function App() {
               <div className="stats-heading"><h2>Thống kê phiên này</h2><span>{history.length} lượt</span></div>
               <div className="stats-grid">
                 <div className="stat-box"><span><i className="dot-recycle" />Tái chế</span><strong>{String(counts.recycle).padStart(2, "0")}</strong></div>
+                <div className="stat-box"><span><i className="dot-non-recyclable" />Không tái chế được</span><strong>{String(counts.non_recyclable).padStart(2, "0")}</strong></div>
                 <div className="stat-box"><span><i className="dot-organic" />Hữu cơ</span><strong>{String(counts.organic).padStart(2, "0")}</strong></div>
                 <div className="stat-box"><span><i className="dot-other" />Khác</span><strong>{String(counts.other).padStart(2, "0")}</strong></div>
               </div>
@@ -218,7 +257,7 @@ function App() {
               <div className="history-heading"><h2>Lịch sử nhận diện</h2><button type="button" onClick={clearHistory} disabled={!history.length}>Xóa lịch sử</button></div>
               <div className="history-list">
                 {!history.length && <p className="history-empty">Các vật thể đã nhận diện sẽ xuất hiện ở đây.</p>}
-                {history.map((item, index) => <div className="history-row" key={`${item.time}-${index}`}><span className={`history-icon category-${item.category}`}><Icon name={item.category === "recycle" ? "recycle" : item.category === "organic" ? "organic" : "other"} size={16} /></span><div className="history-detail"><strong>{item.class_name} · {item.label}</strong><small>{item.time} · {item.source}</small></div><b>{Math.round(item.confidence * 100)}%</b></div>)}
+                {history.map((item, index) => <div className="history-row" key={`${item.time}-${index}`}><span className={`history-icon category-${item.category}`}><Icon name={categoryIcon(item.category)} size={16} /></span><div className="history-detail"><strong>{item.class_name} · {item.label}</strong><small>{item.time} · {item.source}</small></div><b>{Math.round(item.confidence * 100)}%</b></div>)}
               </div>
             </article>
           </div>

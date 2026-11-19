@@ -2,7 +2,7 @@ services:
   backend:
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: src/backend/Dockerfile
     environment:
       MODEL_PATH: /models/best.pt
       MAX_IMAGE_BYTES: 20971520
