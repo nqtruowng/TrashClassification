@@ -12,3 +12,4 @@ AGENTS.md
 tests/
 docs/
 processed-data.backup-20261029/
+.agents/

@@ -1,74 +1,125 @@
-# Trash Classification
+# GreenLens — Nhận diện và phân loại rác
 
-Pipeline tiền xử lý YOLO Detection chỉ dùng **Drinking-waste** và **Garbage**, với nhãn bounding box có sẵn. Bộ lớp đích giữ nguyên: `organic, cardboard, glass, metal, paper, plastic` (ID 0–5).
+GreenLens là ứng dụng web nhận diện vật thể rác bằng camera hoặc ảnh tải lên. Frontend React hiển thị kết quả, độ tin cậy và gợi ý xử lý; backend FastAPI chạy model Ultralytics YOLO. Dự án cũng có pipeline để kiểm kê, chuẩn hóa nhãn, làm sạch, chia tập và xuất dữ liệu YOLO.
 
-Đã triển khai kiểm tra cấu hình, kiểm kê, remap, làm sạch (bước 1–4) và chia train/test/val (bước 6). Đã thêm xuất YOLO (bước 7); duyệt nội dung nhãn và train chưa hoàn tất. Kế hoạch: [dataset-preprocessing-plan.md](docs/plans/dataset-preprocessing-plan.md).
+## Tính năng
 
-## Train RT-DETR-L pretrained trên Kaggle (2 GPU T4)
+- Nhận diện một ảnh JPG/PNG, phân tích video bằng tối đa 8 khung hình lấy mẫu, hoặc bật camera trực tuyến để nhận diện định kỳ.
+- Gửi ảnh tới API, hiển thị bounding box, lớp dự đoán, độ tin cậy và hướng dẫn xử lý.
+- Theo dõi số lượt nhận diện và phân bố lớp trong phiên hiện tại.
+- Trang Hướng dẫn phân loại giải thích ba nhóm model, ví dụ thường gặp và gợi ý xử lý; nhắc người dùng kiểm tra quy định thu gom tại địa phương.
+- Giao diện dashboard theo bản duyệt [preview.html](src/frontend/preview.html), được chia thành component React; ba chế độ nhận diện đều có luồng hoạt động riêng và giao diện responsive cho màn hình máy tính.
+- Pipeline dataset cấu hình được, có kiểm tra trùng ảnh, nhóm gần trùng và rò rỉ ảnh giữa các tập.
+- Huấn luyện YOLO26n hoặc RT-DETR-L bằng Ultralytics.
 
-Luồng riêng: `src/training/train_rtdetr.py`, dùng `ultralytics.RTDETR("rtdetr-l.pt")` pretrained COCO và đọc trực tiếp dataset YOLO. File `src/training/train.py` vẫn giữ luồng YOLO hiện có.
+## Chạy ứng dụng web
 
-Mở [notebook Kaggle](notebooks/train_rtdetr_kaggle.ipynb), bật **Internet**, chọn **GPU T4 ×2**, thêm dataset `processed-data/` và dataset code chứa `train_rtdetr.py`. Sửa `DATA_ROOT`, `CODE_ROOT` trong notebook. Notebook cài Ultralytics cùng phiên bản project, dùng PyTorch CUDA có sẵn của Kaggle và viết lại `path` trong bản YAML tại `/kaggle/working`; không sửa dữ liệu Input.
+### Docker Compose
 
-Chạy lần lượt: kiểm tra GPU/dataset → smoke test 1 epoch trên 16 ảnh train/val → train đầy đủ → đánh giá test → dự đoán ảnh → đóng gói kết quả. Baseline: **640 px, 50 epoch, batch tổng 4 (2 ảnh/GPU), 2 workers/GPU, AdamW LR 1e-4, FP32**, early stopping 15 epoch. `device=[0, 1]` để Ultralytics tự khởi chạy DDP. Có thể bật `AMP=True` sau khi kiểm tra ổn định; mặc định tắt vì RT-DETR có thể gặp NaN với AMP. Nếu thiếu VRAM, giảm batch tổng xuống 2 hoặc imgsz xuống 512.
-
-Chạy local trên GPU đầu tiên:
-
-```powershell
-uv run --locked python -B src/training/train_rtdetr.py
-```
-
-`train()` trong file mới nhận `data`, `project`, `device`, `epochs`, `imgsz`, `batch`, `workers`, `amp`, `name`, trả về thư mục run. Kết quả local nằm trong `model/dd-mm-yyyy-rtdetr-l/`; Kaggle nằm trong `/kaggle/working/model/`. Có `weights/best.pt`, `weights/last.pt`, checkpoint mỗi 5 epoch, `args.yaml`, `results.csv`. Run trùng tên được thêm hậu tố số. Chọn model bằng val; chỉ đánh giá test sau khi chốt model. Notebook có bước lưu ZIP để tải về hoặc giữ bằng Save Version.
-
-Nguồn API: [RT-DETR Ultralytics](https://docs.ultralytics.com/models/rtdetr/) và [ghi chú RTDETRTrainer về AMP/deterministic](https://docs.ultralytics.com/reference/models/rtdetr/train/). Cấu hình T4 là baseline khởi đầu, chưa phải benchmark trên Kaggle.
-
-## Train YOLOv8n pretrained
+Yêu cầu Docker Compose và model checkpoint. Mặc định dự án dùng `model/11-11-2026-yolo26n/weights/best.pt`.
 
 ```powershell
-uv run --locked python -B src/training/train.py
+docker compose up --build
 ```
 
-`src/training/train.py` đọc `processed-data/data.yaml`, tự tải trọng số pretrained `yolov8n.pt` vào `model/` tại gốc project khi chưa có và huấn luyện theo các giá trị `epochs`, `imgsz`, `batch`, `workers` trong hàm `train()`. Chỉnh các giá trị này trực tiếp trong file; không cần tham số CLI. Đường dẫn được tính từ thư mục gốc project.
+Mở frontend tại [http://localhost:8080](http://localhost:8080). Backend API chạy ở cổng 8000; kiểm tra trạng thái tại [http://localhost:8000/health](http://localhost:8000/health).
 
-Train dùng GPU NVIDIA đầu tiên (`device=0`). Trên Windows, `pyproject.toml` và `uv.lock` chọn PyTorch 2.14.1 cùng torchvision 0.29.1 bản CUDA 13.0 từ kho chính thức PyTorch; `uv sync` cài đúng bản GPU. Nếu CUDA không sẵn sàng, lệnh train báo lỗi thay vì tự chuyển sang CPU. Cấu hình này dành cho máy có GPU NVIDIA và driver tương thích.
+Có thể chọn checkpoint khác bằng biến `MODEL_FILE`:
 
-Hàm `train()` lưu kết quả trong `model/dd-mm-yyyy-tên_model/` theo ngày bắt đầu chạy trên máy, ví dụ `model/15-10-2026-yolov8n/weights/best.pt`. Tên model lấy từ tên file pretrained (bỏ đuôi `.pt`); trọng số kết quả mang tên `best.pt` và `last.pt`. Các lần chạy cùng ngày với cùng model được Ultralytics thêm số vào thư mục cuối để giữ kết quả cũ. Train dùng tập train, đánh giá trong quá trình huấn luyện bằng val theo YAML. API theo [tài liệu YOLOv8 của Ultralytics](https://docs.ultralytics.com/models/yolov8/).
+```powershell
+$env:MODEL_FILE = ".\model\duong-dan\best.pt"
+docker compose up --build
+```
 
-## Nguồn và cấu hình
+### Chạy frontend và backend riêng
 
-| Nguồn | Đường dẫn | Lớp đích |
+Backend cần môi trường Python theo `pyproject.toml`, checkpoint YOLO và các dependency đã đồng bộ:
+
+```powershell
+uv sync --locked
+uv run --locked uvicorn src.backend.main:app --host 0.0.0.0 --port 8000
+```
+
+Trong terminal khác:
+
+```powershell
+cd src/frontend
+npm ci
+npm run dev
+```
+
+Mở URL Vite được in trong terminal. Vite chuyển tiếp `/api` tới backend `localhost:8000`. Khi chạy frontend production sau Nginx, cấu hình proxy `/api/` đã có trong `src/frontend/nginx.conf`.
+
+API chính:
+
+| Phương thức | Đường dẫn | Mô tả |
 |---|---|---|
-| Drinking-waste | `raw-data/Images_of_Waste/YOLO_imgs/` | glass, metal, plastic |
-| Garbage | `raw-data/Garbage/GARBAGE CLASSIFICATION/` | Đủ 6 lớp |
+| `GET` | `/health` | Trạng thái backend và model |
+| `POST` | `/predict` | Nhận bytes ảnh dạng `application/octet-stream`, trả kết quả detection |
 
-Chỉ hai nguồn trong `configs/dataset.yaml` được đọc. Các thư mục dữ liệu khác trên máy không tham gia pipeline. `raw-data/` giữ nguyên để truy vết; không cộng thêm ảnh từ `Images_of_Waste/rawimgs/`.
+Có thể đặt đường dẫn checkpoint qua biến môi trường `MODEL_PATH`. Kích thước ảnh mặc định tối đa 20 MiB; có thể thay đổi bằng `MAX_IMAGE_BYTES`.
 
-- Hai nguồn dùng chung seed 42 và tỷ lệ mục tiêu train/test/val 80/10/10, không giới hạn số ảnh.
-- Test được tách từ hai nguồn theo nhóm; chỉ dùng để đánh giá sau khi chốt mô hình. Split gốc train/valid/test của Garbage được lưu trong metadata, không dùng làm split cuối.
-- ID đích là vị trí trong `classes`. Mapping Drinking-waste: AluCan → metal, Glass → glass, HDPEM/PET → plastic. Garbage remap từ tên lớp trong YAML gốc.
-- Thứ tự Drinking-waste `[AluCan, Glass, HDPEM, PET]` khớp kiểm tra tiền tố tên ảnh và các mẫu đã xem, nhưng chưa có metadata chính thức; `class_order_verified` vẫn false.
+## Dataset hiện tại
 
-## Cấu trúc
+Dataset huấn luyện chính là `processed-data/`, được tham chiếu bởi `src/training/train.py` và `src/training/train_rtdetr.py`. File `processed-data/data.yaml` khai báo ba lớp theo đúng thứ tự ID:
+
+| ID | Lớp |
+|---:|---|
+| 0 | `Biodegradable` — rác phân hủy sinh học |
+| 1 | `recyclable` — rác tái chế được |
+| 2 | `non_recyclable` — rác không tái chế được |
+
+### Số ảnh theo lớp
+
+Số liệu lấy từ `artifacts/export-summary.json`, là đầu ra export hiện tại. “Ảnh chứa lớp” là số ảnh có ít nhất một box của lớp đó; một ảnh có thể chứa nhiều lớp. “Box” là số bounding box trong các nhãn YOLO.
+
+| Lớp | Ảnh chứa lớp | Bounding box |
+|---|---:|---:|
+| `Biodegradable` | 24.097 | 85.540 |
+| `recyclable` | 44.048 | 91.981 |
+| `non_recyclable` | 12.765 | 31.256 |
+| **Tổng lượt lớp/box** | **80.910** | **208.777** |
+
+Tổng lượt ảnh chứa lớp lớn hơn tổng ảnh vì một ảnh có thể mang nhiều lớp. Tổng dataset xuất là **74.103 ảnh**, chia như sau:
+
+| Tập | Số ảnh | Biodegradable | recyclable | non_recyclable |
+|---|---:|---:|---:|---:|
+| Train | 59.279 | 19.277 | 35.237 | 10.211 |
+| Val | 7.409 | 2.411 | 4.402 | 1.277 |
+| Test | 7.415 | 2.409 | 4.409 | 1.277 |
+| **Tổng** | **74.103** | **24.097** | **44.048** | **12.765** |
+
+Trước export có 74.413 ảnh trong split manifest; export loại **310 ảnh** do có ít nhất một box vượt biên ảnh. Dataset đã xuất nằm tại:
 
 ```text
-main.py                       # CLI gọi bước được chọn
-src/preprocess/
-  step1_config.py             # Kiểm tra cấu hình, báo cáo môi trường
-  step2_inventory.py          # Ghép ảnh/nhãn và thống kê
-  step3_remap.py              # Ánh xạ lớp, giữ nhãn nguồn và lý do cần duyệt
-  step4_clean.py              # Lọc lỗi/trùng và nhãn không hợp lệ, chuẩn hóa ảnh
-  step5_split.py              # Bước 6: chia theo nhóm và cân đối nguồn/lớp
-  step7_export.py             # Xuất và kiểm tra dataset YOLO
-configs/dataset.yaml           # Hai nguồn, lớp, mapping và tỷ lệ chia
-raw-data/                     # Dữ liệu gốc
-artifacts/                    # Báo cáo và dữ liệu trung gian
-processed-data/               # Chỉ ảnh, TXT và YAML đúng định dạng YOLO
-tests/test_config.py          # Kiểm thử pipeline
+processed-data/
+  data.yaml
+  images/{train,val,test}/
+  labels/{train,val,test}/
 ```
 
-`processed-data/` chỉ chứa ảnh, nhãn TXT và `data.yaml` do bước 7 xuất. Báo cáo, checksum, danh sách loại và dữ liệu trung gian đều nằm trong `artifacts/`. Việc xuất định dạng YOLO không tự xác nhận nhãn đã được duyệt.
+`processed-data-20k/` là tập con 20.000 ảnh được lấy ngẫu nhiên theo split hiện có (16.000 train, 2.000 val, 2.000 test); luồng huấn luyện mặc định không dùng tập con này.
 
-## Chạy
+### Nguồn và mapping
+
+Cấu hình tại `configs/dataset.yaml` đưa bốn nguồn YOLO vào cùng ba lớp đích:
+
+| Nguồn | Mapping chính |
+|---|---|
+| `raw-data/Recyclable Waste` | `Non-Recyclable` → `non_recyclable`; `Recyclable` → `recyclable` |
+| `raw-data/Waste management` | Thực phẩm/giấy → `Biodegradable`; quần áo → `non_recyclable`; thủy tinh, kim loại, nhựa, cao su → `recyclable` |
+| `raw-data/Waste Management- Recyclingv1` | Ba lớp nguồn được map trực tiếp sang ba lớp đích |
+| `raw-data/Waste Detection` | Rác bếp và gỗ → `Biodegradable`; quần áo → `non_recyclable`; vật liệu tái chế → `recyclable` |
+
+Lớp nguy hại trong hai nguồn phù hợp được loại khỏi mapping. `raw-data/` được giữ làm dữ liệu gốc; chỉ bốn nguồn khai báo trong cấu hình được dùng trong pipeline.
+
+### Trạng thái nhãn
+
+Các con số trên mô tả phân bố kỹ thuật của nhãn, không phải kết quả kiểm định nội dung. Báo cáo export hiện đánh dấu `ready_for_training: 0`; nhãn vẫn ở trạng thái `needs_review`. Cần duyệt tính đúng đắn ngữ nghĩa, xác minh các trường hợp mâu thuẫn nhãn trước khi xem dataset là đã được kiểm định. Bước export kiểm tra định dạng, tọa độ và ranh giới box, nhưng không tự xác nhận vật thể được gán đúng lớp.
+
+## Pipeline tiền xử lý
+
+Các bước được gọi tuần tự từ thư mục gốc. Nếu cấu hình hoặc dữ liệu nguồn thay đổi, chạy lại các bước từ inventory để cập nhật artifact nhất quán.
 
 ```powershell
 uv sync --locked
@@ -77,152 +128,63 @@ uv run --locked python -B main.py --stage inventory
 uv run --locked python -B main.py --stage remap
 uv run --locked python -B main.py --stage clean
 uv run --locked python -B main.py --stage split
-```
-
-Chạy theo thứ tự trên sau khi thay đổi nguồn. Nếu không có `--stage`/`--report`, CLI chỉ kiểm tra cấu hình, không ghi file. `--config` chọn YAML khác; đường dẫn tương đối tính từ gốc project. `-B` tránh tạo bytecode cache. Không cần tải model hoặc cài dependency autobox.
-
-## Kiểm kê — bước 2
-
-Đọc toàn bộ ảnh của hai nguồn để đối chiếu tổng số và lỗi. Ghép TXT theo nguồn/split/stem không phân biệt hoa thường; xung đột tên làm lệnh dừng. Giữ ID ổn định, split gốc Garbage, kích thước, màu và EXIF.
-
-| Nguồn | Ảnh gốc | File nhãn | Thiếu TXT | Nhãn lỗi | Ảnh lỗi giải mã |
-|---|---:|---:|---:|---:|---:|
-| Drinking-waste | 4.829 | 4.811 | 18 | 13 | 8 |
-| Garbage | 10.464 | 10.464 | 0 | 17 | 0 |
-| **Tổng** | **15.293** | **15.275** | **18** | **30** | **8** |
-
-8 HEIC lỗi giải mã cũng nằm trong 18 ảnh thiếu TXT; 10 ảnh thiếu TXT còn lại là `Glass664`–`Glass673`. Không có TXT rỗng hoặc nhãn mồ côi trong dữ liệu hiện tại. Số kiểm kê chưa phải số ảnh đưa vào huấn luyện.
-
-Đầu ra:
-
-- `artifacts/manifest.csv`: một dòng mỗi ảnh; nhãn mồ côi có dòng riêng. Đường dẫn ảnh/nhãn tính từ `local_root` của nguồn.
-- `artifacts/inventory-summary.json`: thống kê theo nguồn/lớp, số box, split gốc, lỗi và checksum manifest.
-
-Trạng thái nhãn nguồn: `unreviewed` đọc được, `missing` thiếu TXT, `empty_unverified` rỗng chưa xác nhận, `invalid` lỗi, `orphan` không có ảnh. File có một dòng sai vẫn được đánh dấu invalid toàn bộ. Thống kê lớp/box chỉ tính nhãn không có lỗi cú pháp/miền giá trị.
-
-## Chuẩn hóa lớp — bước 3
-
-Kiểm tra checksum manifest và cấu hình trước khi remap. Giữ nguyên nội dung TXT gốc cùng nguồn, đường dẫn, split gốc và từng box sau đổi ID.
-
-- `artifacts/annotations.jsonl`: các bản ghi kiểm kê đã remap, gồm cả lỗi để truy vết.
-- `artifacts/remap-summary.json`: thống kê trạng thái/lớp đích, cấu hình, kiểm tra thứ tự ID và checksum.
-
-Nhãn đọc được mang `needs_review`; thiếu/rỗng mang `needs_annotation`; ảnh hỏng bị `excluded`. Bước 4 loại các ảnh không có nhãn nguồn hợp lệ; không tạo box mới hay coi nhãn thiếu là ảnh nền. Toàn bộ bản ghi vẫn `ready_for_training=false`.
-
-## Làm sạch — bước 4
-
-Chỉ giữ ảnh có nhãn bounding box nguồn hợp lệ về định dạng. Loại ảnh lỗi, nhãn mồ côi, bản trùng, thiếu TXT, TXT rỗng và nhãn lỗi. Không dùng phần box đọc được của một file invalid.
-
-- Đọc ảnh bằng 4 luồng; dùng SHA-256 file và pixel RGB sau EXIF để tìm bản trùng chính xác.
-- Tìm gần trùng bằng dHash 64 bit cách tối đa 4 bit, tỷ lệ ảnh lệch tối đa 1% và MAE thumbnail RGB tối đa 8/255. Chỉ xóa bản sao sau đối chiếu pixel toàn ảnh: MAE <= 2/255, RMS <= 4/255 và tối đa 1% mẫu kênh màu lệch quá 16/255.
-- Resize chỉ phục vụ đối chiếu; giữ kích thước/tỷ lệ ảnh đầu ra. Cặp tương tự chưa đủ bằng chứng xóa vẫn cùng `group_id` để không chia chéo train/test/val.
-- Chọn đại diện theo chất lượng nhãn, có box, độ phân giải và ID ổn định; nhãn mâu thuẫn giữa các bản sao được ghi `duplicate_label_conflict` để duyệt.
-- Chuẩn hóa RGB và 8 hướng EXIF, đổi tọa độ box tương ứng. Chỉ ghi PNG mới nếu thực sự đổi màu/hướng; ảnh khác tham chiếu nguồn.
-
-| Đầu ra trong `artifacts/clean/` | Nội dung |
-|---|---|
-| `annotations.jsonl` | Chỉ ảnh được giữ, box, group ID, hash và image_path |
-| `decisions.jsonl` | Quyết định giữ/loại và bằng chứng cặp trùng/gần trùng |
-| `summary.json` | Thống kê nguồn, lý do loại, ngưỡng, cấu hình và checksum |
-| `images/` | Chỉ ảnh được giữ cần chuẩn hóa |
-
-`image_path` trỏ tới ảnh nguồn tuyệt đối hoặc ảnh chuẩn hóa tương đối với gốc project; box tương ứng đúng ảnh này. `original_label` giữ nhãn trước biến đổi. Kết quả cũ được thay khi bước clean hoàn tất thành công.
-
-Nhãn thiếu/rỗng/lỗi được lọc sau chọn đại diện. Mỗi ảnh bị loại có một lý do chính; nhãn lỗi đã bị loại dưới dạng bản trùng không được đếm lần nữa vào lý do invalid_label.
-
-## Kết quả chạy lại ngày 13/10/2026
-
-Từ 15.293 ảnh gốc, giữ **15.164 ảnh có nhãn nguồn hợp lệ về định dạng**:
-
-| Nguồn | Giữ lại | Loại |
-|---|---:|---:|
-| Drinking-waste | 4.723 | 106 |
-| Garbage | 10.441 | 23 |
-| **Tổng** | **15.164** | **129** |
-
-129 ảnh bị loại gồm 82 bản trùng, 8 ảnh lỗi giải mã, 10 ảnh thiếu TXT và 29 ảnh có nhãn lỗi. Một trong 30 nhãn lỗi ban đầu đã bị loại dưới dạng bản trùng. Cách đếm lý do loại thay đổi khi chỉ đối chiếu hai nguồn; đây là kết quả của lần chạy hiện tại.
-
-| Lớp | Drinking-waste | Garbage | Tổng ảnh chứa lớp |
-|---|---:|---:|---:|
-| organic | 0 | 2.275 | 2.275 |
-| cardboard | 0 | 1.499 | 1.499 |
-| glass | 1.224 | 2.683 | 3.907 |
-| metal | 1.079 | 1.898 | 2.977 |
-| paper | 0 | 1.760 | 1.760 |
-| plastic | 2.442 | 1.463 | 3.905 |
-
-Một ảnh có thể chứa nhiều lớp nên tổng các dòng vượt 15.164. Đầu ra có 15.100 nhóm, 1 ảnh cần lưu bản chuẩn hóa và 80 ảnh đại diện có mâu thuẫn nhãn giữa các bản sao. Nhãn vẫn còn `needs_review`; kết quả chia bước 6 nằm trong manifest riêng; số liệu xuất sau kiểm tra bổ sung ở phần bước 7 bên dưới.
-
-Đã đối chiếu checksum, số giữ/loại, ID duy nhất, hash file/pixel không trùng, đường dẫn ảnh và lớp đích. Manifest/remap/clean chỉ chứa đúng hai nguồn được chọn; mọi ảnh clean có box nguồn và không có nhãn thiếu/rỗng/invalid.
-
-## Chia train/test/val — bước 6
-
-```powershell
-uv run --locked python -B main.py --stage split
-```
-
-Đọc `artifacts/clean/annotations.jsonl`, kiểm tra checksum và cấu hình rồi chia toàn bộ ảnh sạch theo tỷ lệ **train 80%, test 10%, val 10%**, seed 42. Theo yêu cầu thực hiện bước 6 trước khi duyệt nhãn, trạng thái `needs_review` và `ready_for_training=false` được giữ nguyên.
-
-- Giữ nguyên `group_id` trong một tập; ưu tiên nhóm lớn, sau đó lớp hiếm. Dùng seed phá hòa và cân đối số ảnh theo nguồn và nguồn × lớp; mỗi ảnh nhiều lớp được tính một lần cho từng lớp.
-- Làm tròn số ảnh bằng phần dư lớn nhất, hòa phần dư ưu tiên train → test → val. Nếu kích thước nhóm ngăn đạt đúng số ảnh mục tiêu, giữ nhóm và báo độ lệch thay vì tách nhóm.
-- Kiểm tra không giao nhau theo image ID, group ID, SHA-256 file và SHA-256 pixel giữa cả ba tập trước khi ghi.
-- `artifacts/split-manifest.csv`: mỗi ảnh một dòng có split, đường dẫn, nguồn, split gốc, hash, nhóm và trạng thái nhãn. Lấy box đã remap/chuẩn hóa từ clean bằng image_id, không dùng trực tiếp TXT nguồn.
-- `artifacts/split-summary.json`: số ảnh/nhóm, nguồn, số ảnh và box từng lớp, trạng thái duyệt, tỷ lệ thực tế, chênh lệch mục tiêu, kết quả kiểm tra giao nhau và checksum.
-
-Chạy lại cùng dữ liệu/cấu hình/seed cho cùng kết quả; ghi đè hai file cùng đường dẫn, không nhân bản ảnh. Đổi cấu hình thì chạy lại remap và clean trước split để các báo cáo khớp nhau. Xuất ảnh/TXT/data.yaml thuộc bước 7.
-
-Kết quả trên 15.164 ảnh, seed 42:
-
-| Tập | Ảnh | Drinking-waste | Garbage |
-|---|---:|---:|---:|
-| Train | 12.131 | 3.779 | 8.352 |
-| Test | 1.517 | 472 | 1.045 |
-| Val | 1.516 | 472 | 1.044 |
-
-Cả ba tập có đủ 6 lớp. Số ảnh đạt đúng mục tiêu sau làm tròn; không giao nhau theo ID, nhóm, hash file hoặc hash pixel trong dữ liệu đã kiểm tra. Tổng 15.100 nhóm được giữ nguyên. Đã đối chiếu toàn bộ ID, nguồn, split gốc, đường dẫn, lớp, số box và checksum đầu ra với clean.
-
-## Xuất YOLO — bước 7
-
-```powershell
 uv run --locked python -B main.py --stage export
 ```
 
-`src/preprocess/step7_export.py` lấy split từ manifest bước 6 và box từ clean. Kiểm tra checksum/cấu hình, đối chiếu metadata và kiểm tra không giao nhau theo nhóm/hash giữa các tập trước khi xuất. Tên ảnh và TXT dùng cùng image ID ổn định. Nhãn dùng ID đích 0–5 và tọa độ ứng với đúng ảnh đã chuẩn hóa; không đọc lại TXT gốc để bỏ qua remap hoặc EXIF.
+Không truyền `--stage` thì CLI chỉ kiểm tra cấu hình. Các stage:
 
-Loại cả ảnh khi có bất kỳ box sai ID, giá trị không hữu hạn, kích thước không dương hoặc cạnh vượt ngoài ảnh (dung sai số thực 1e-9). Không cắt box hoặc xuất riêng các dòng đúng của một nhãn lỗi. Giữ nguyên split của ảnh còn lại, không chia lại sau khi loại.
+1. `config` — kiểm tra cấu hình và số nguồn/lớp.
+2. `inventory` — ghép ảnh/nhãn, ghi kiểm kê trong `artifacts/`.
+3. `remap` — ánh xạ ID lớp nguồn sang lớp đích.
+4. `clean` — loại nhãn/ảnh lỗi, tìm bản trùng và chuẩn hóa EXIF/RGB.
+5. `split` — chia theo nhóm ảnh với seed 42, mục tiêu train/val/test là 80/10/10.
+6. `export` — ghi ảnh, nhãn YOLO và `data.yaml` vào `processed-data/` sau kiểm tra.
 
-Ảnh được sao chép vào thư mục tạm trong `artifacts/`, kiểm tra checksum, giải mã đầy đủ, RGB, EXIF, kích thước và hash pixel so với clean. Đọc lại nhãn đã ghi, kiểm tra cặp ảnh/TXT rồi mới đưa dataset vào `processed-data/`. Nếu ảnh nguồn thay đổi, dừng để chạy lại clean/split. Thư mục đích phải chưa có hoặc rỗng; chạy lại khi đã có dữ liệu sẽ dừng để bảo vệ dataset hiện tại.
+Đường dẫn cấu hình mặc định là `configs/dataset.yaml`; có thể chọn YAML khác bằng `--config`. Kết quả trung gian và báo cáo nằm trong `artifacts/`. Export bảo vệ dataset hiện có: thư mục `processed-data/` cần chưa tồn tại hoặc đang rỗng khi tạo lại.
 
-```text
-processed-data/
-  data.yaml
-  images/train/   images/test/   images/val/
-  labels/train/   labels/test/   labels/val/
+## Huấn luyện và đánh giá
+
+### YOLO26n
+
+```powershell
+uv run --locked python -B src/training/train.py
 ```
 
-`data.yaml` chứa names theo cấu hình và đường dẫn tuyệt đối tới dataset hiện tại; khi di chuyển thư mục cần cập nhật `path`. `artifacts/export-summary.json` chứa checksum từng file, phân bố ảnh/box/lớp/nguồn, trạng thái duyệt và ID/nguồn/đường dẫn/split/lý do của từng ảnh bị loại. Không đặt báo cáo hoặc cache trong dataset.
+Script đọc `processed-data/data.yaml`, dùng GPU NVIDIA số 0 và pretrained `yolo26n.pt`. Cấu hình hiện tại: 40 epoch tối đa, patience 12, ảnh 640 px, batch 16, 4 workers, AdamW, learning rate 0.00015. Kết quả được lưu vào `model/` theo ngày và tên model, gồm `best.pt`, `last.pt` và checkpoint định kỳ.
 
-Kết quả ngày 14/10/2026: **14.992 ảnh và 14.992 TXT**, loại thêm **172 ảnh Drinking-waste chứa 174 box vượt biên**. Loại toàn bộ 185 box thuộc những ảnh này, kể cả 11 box không vượt biên nằm cùng ảnh, để không dùng nhãn thiếu vật thể.
+### RT-DETR-L
 
-| Tập | Ảnh xuất | Ảnh loại thêm |
-|---|---:|---:|
-| Train | 11.995 | 136 |
-| Test | 1.506 | 11 |
-| Val | 1.491 | 25 |
+```powershell
+uv run --locked python -B src/training/train_rtdetr.py
+```
 
-Đã kiểm tra độc lập toàn bộ 29.985 file sau khi xuất: checksum khớp, ảnh/TXT ghép đủ, box đúng clean và trong biên, mỗi split đủ 6 lớp, không giao nhau theo nhóm/hash. Thư mục tạm của lần xuất đã được dọn.
+Trainer này dùng pretrained `rtdetr-l.pt`, mặc định 50 epoch, ảnh 640 px, batch 4 và GPU 0. Có thể truyền cấu hình khi gọi `train()` trong Python; tham số `batch` là tổng batch size trên các GPU được chọn. AMP tắt mặc định để tránh NaN đã biết với một số cấu hình RT-DETR.
 
-Trạng thái `needs_review` và `ready_for_training=false` trong clean/split được giữ nguyên. 72 ảnh xuất còn mang cảnh báo mâu thuẫn nhãn giữa các bản sao; thứ tự lớp Drinking-waste vẫn chưa xác minh chính thức. Bước 7 xác nhận tính hợp lệ kỹ thuật của ảnh/TXT; bước duyệt nội dung và bước 8 vẫn cần thực hiện trước khi kết luận chất lượng huấn luyện.
+### Đánh giá
 
-## Chất lượng nhãn và bước tiếp theo
+`src/training/evaluate.py` chạy đánh giá trên split test bằng Ultralytics. Trước khi chạy, cập nhật `MODEL_PATH` trong file tới checkpoint cần đo:
 
-Có đủ 6 lớp không đồng nghĩa mọi box đã chính xác. Bộ đọc hiện kiểm tra ID, số hữu hạn, tâm trong [0,1] và kích thước trong (0,1]; bước 7 bổ sung kiểm tra toàn bộ cạnh box và loại cả ảnh có box vượt biên. Theo yêu cầu thực hiện bước 7, xuất nhãn nguồn hiện có, giữ nguyên trạng thái chưa duyệt. Vẫn cần xác minh ID Drinking-waste, xử lý mâu thuẫn nhãn và duyệt nội dung trước khi xác nhận chất lượng dataset.
+```powershell
+uv run --locked python -B src/training/evaluate.py
+```
 
-Phạm vi hiện tại chỉ dùng nhãn sẵn có; không cần luồng Grounding DINO/BiRefNet hay tạo box cho nguồn classification. Dataset xuất chỉ có `images/train`, `images/test`, `images/val`, `labels/train`, `labels/test`, `labels/val` và `data.yaml`.
+## Cấu trúc dự án
 
-## Thông tin nguồn cục bộ
-
-Drinking-waste không có README/LICENSE/class names được tìm thấy trong bản dữ liệu đang dùng. Garbage có metadata trong `raw-data/Garbage/GARBAGE CLASSIFICATION/data.yaml`: CC BY 4.0, workspace `material-identification`, project `garbage-classification-3`, version 2. Đây là thông tin từ bản dữ liệu cục bộ.
+```text
+configs/dataset.yaml          # Nguồn, lớp đích, mapping và tỷ lệ chia
+raw-data/                     # Các bộ dữ liệu gốc
+artifacts/                    # Manifest, báo cáo và dữ liệu trung gian
+processed-data/               # Dataset YOLO chính dùng train
+processed-data-20k/           # Tập con 20.000 ảnh
+src/frontend/                 # React + Vite; UI trong App.jsx/components.jsx
+src/backend/main.py           # FastAPI và endpoint nhận diện
+src/preprocess/                # Các stage tiền xử lý
+src/training/                  # Trainer YOLO/RT-DETR và đánh giá
+model/                         # Checkpoint pretrained và kết quả train
+tests/                         # Kiểm thử pipeline
+main.py                        # CLI tiền xử lý
+docker-compose.yml             # Frontend Nginx và backend API
+```
 
 ## Kiểm thử
 
@@ -230,6 +192,10 @@ Drinking-waste không có README/LICENSE/class names được tìm thấy trong 
 uv run --locked python -B -m unittest discover -s tests -v
 ```
 
-41 kiểm thử đạt, gồm hai dạng YOLO, loại nhãn thiếu/rỗng/lỗi, remap, EXIF, lọc trùng, chia theo nhóm, tỷ lệ, tính tái lập và bảo vệ đầu ra khi dữ liệu/cấu hình thay đổi, xuất YOLO đúng ảnh/box sau EXIF, loại box vượt biên, kiểm tra checksum và không để lại dataset dở dang khi lỗi. Không thêm dependency; `uv.lock` giữ nguyên.
+Frontend build:
 
-Các file step chỉ xử lý nguồn YOLO. Đã bỏ nhánh classification, bối cảnh thư mục, mapping DROP và ưu tiên nguồn test riêng; bỏ các trường cấu hình `role`, `cap`, `eval` cùng metadata `scene_type` và `mapping_status`. Cấu hình có trường cũ bị từ chối để tránh âm thầm bỏ qua yêu cầu. Manifest cũ không đúng danh sách cột phải được tạo lại bằng inventory trước khi remap.
+```powershell
+cd src/frontend
+npm ci
+npm run build
+```
