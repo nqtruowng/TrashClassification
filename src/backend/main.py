@@ -5,11 +5,29 @@ from contextlib import asynccontextmanager
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 from PIL import Image, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 from ultralytics import YOLO
+from sqlalchemy.orm import Session
+
+from src.backend.auth import (
+    AUTH_COOKIE_NAME,
+    AUTH_COOKIE_SECURE,
+    JWT_ACCESS_TOKEN_MINUTES,
+    JWT_SECRET_KEY,
+    Base,
+    Credentials,
+    User,
+    authenticate_user,
+    create_access_token,
+    engine,
+    get_current_user,
+    get_session,
+    public_user,
+    register_user,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,6 +51,11 @@ def category_for(class_name: str) -> tuple[str, str, str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if len(JWT_SECRET_KEY) < 32:
+        raise RuntimeError("JWT_SECRET_KEY phải có ít nhất 32 ký tự. Hãy cấu hình biến môi trường trước khi chạy backend.")
+    if JWT_ACCESS_TOKEN_MINUTES < 1:
+        raise RuntimeError("JWT_ACCESS_TOKEN_MINUTES phải lớn hơn 0.")
+    await run_in_threadpool(Base.metadata.create_all, engine)
     if not MODEL_PATH.is_file():
         raise FileNotFoundError(f"Không tìm thấy model: {MODEL_PATH}")
     print(f"Đang tải model: {MODEL_PATH}")
@@ -48,8 +71,45 @@ def health(request: Request):
     return {"status": "ready", "model": MODEL_PATH.name, "loaded": hasattr(request.app.state, "model")}
 
 
+def set_auth_cookie(response: Response, user: User) -> None:
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=create_access_token(user),
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="lax",
+        max_age=JWT_ACCESS_TOKEN_MINUTES * 60,
+        path="/",
+    )
+
+
+@app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+def register(credentials: Credentials, response: Response, session: Session = Depends(get_session)):
+    user = register_user(session, credentials)
+    set_auth_cookie(response, user)
+    return {"user": public_user(user)}
+
+
+@app.post("/auth/login")
+def login(credentials: Credentials, response: Response, session: Session = Depends(get_session)):
+    user = authenticate_user(session, credentials)
+    set_auth_cookie(response, user)
+    return {"user": public_user(user)}
+
+
+@app.get("/auth/me")
+def current_user(user: User = Depends(get_current_user)):
+    return {"user": public_user(user)}
+
+
+@app.post("/auth/logout")
+def logout(response: Response):
+    response.delete_cookie(AUTH_COOKIE_NAME, httponly=True, secure=AUTH_COOKIE_SECURE, samesite="lax", path="/")
+    return {"message": "Đã đăng xuất."}
+
+
 @app.post("/predict")
-async def predict(request: Request):
+async def predict(request: Request, _user: User = Depends(get_current_user)):
     content_length = request.headers.get("content-length")
     if content_length:
         try:

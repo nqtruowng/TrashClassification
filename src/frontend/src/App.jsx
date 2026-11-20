@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AppHeader,
+  AuthPage,
   GuidePage,
   Icon,
   PageHeading,
@@ -46,6 +47,18 @@ function App() {
   const [toast, setToast] = useState("");
   const [cameraError, setCameraError] = useState("");
   const [page, setPage] = useState(() => window.location.hash === "#guide" ? "guide" : "recognition");
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/me", { credentials: "same-origin" })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => { if (active) setAuthUser(data?.user || null); })
+      .catch(() => { if (active) setAuthUser(null); })
+      .finally(() => { if (active) setAuthLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     const syncPage = () => setPage(window.location.hash === "#guide" ? "guide" : "recognition");
@@ -63,6 +76,11 @@ function App() {
     if (window.location.hash !== hash) window.history.pushState({}, "", hash);
     setPage(nextPage);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function logout() {
+    try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); }
+    finally { setAuthUser(null); }
   }
 
   useEffect(() => () => {
@@ -289,10 +307,13 @@ function App() {
   const recycleRate = total ? Math.round((counts.recycle / total) * 100) : 0;
   const today = new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "numeric", month: "long" }).format(new Date());
 
+  if (authLoading) return <div className="auth-loading" role="status">Đang kiểm tra phiên đăng nhập…</div>;
+  if (!authUser) return <AuthPage onAuthenticated={setAuthUser} />;
+
   return <div className="app-shell">
     <Sidebar page={page} onNavigate={navigate} />
     <div className="app-content">
-      <AppHeader page={page} />
+      <AppHeader page={page} user={authUser} onLogout={logout} />
       {page === "guide" ? <main className="main-area"><GuidePage /></main> : <main className="main-area">
       <PageHeading today={today} />
       <section className="cards user-stats" aria-label="Thống kê phiên nhận diện">

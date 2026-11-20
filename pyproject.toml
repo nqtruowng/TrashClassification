@@ -6,6 +6,11 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.120.0",
+    "sqlalchemy>=2.0.44",
+    "psycopg[binary]>=3.2.12",
+    "PyJWT>=2.10.1",
+    "pwdlib[argon2]>=0.3.0",
+    "email-validator>=2.2.0",
     "pillow>=12.3.0",
     "pyyaml>=6.0.3",
     "torch==2.14.1",

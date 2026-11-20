@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 const iconPaths = {
   leaf: <><path d="M20.5 3.5C12 3.5 5 5.6 5 12.3a5.1 5.1 0 0 0 5.2 5.2c6.7 0 8.8-7 8.8-15.5Z" /><path d="M3 21c2.7-5.4 6.5-8.9 11.6-11.5" /></>,
   camera: <><path d="M4 7h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" /><circle cx="12" cy="13" r="3.5" /></>,
@@ -37,8 +39,66 @@ export function Sidebar({ page, onNavigate }) {
   </aside>;
 }
 
-export function AppHeader({ page }) {
-  return <header className="topbar"><div className="breadcrumb">Không gian của bạn <span>/</span> <b>{page === "guide" ? "Hướng dẫn phân loại" : "Nhận diện rác"}</b></div><div className="topbar-right"><span className="model-status"><i /> Đang hoạt động</span><span className="avatar">GL</span></div></header>;
+export function AppHeader({ page, user, onLogout }) {
+  return <header className="topbar"><div className="breadcrumb">Không gian của bạn <span>/</span> <b>{page === "guide" ? "Hướng dẫn phân loại" : "Nhận diện rác"}</b></div><div className="topbar-right"><span className="model-status"><i /> Đang hoạt động</span><span className="account-email">{user.email}</span><button className="logout-button" type="button" onClick={onLogout}>Đăng xuất</button></div></header>;
+}
+
+export function AuthPage({ onAuthenticated }) {
+  const [isRegister, setIsRegister] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    if (isRegister && password !== confirmPassword) {
+      setError("Mật khẩu xác nhận chưa trùng khớp.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/auth/${isRegister ? "register" : "login"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const detail = typeof data.detail === "string" ? data.detail : "Thông tin chưa hợp lệ. Hãy kiểm tra email và mật khẩu.";
+        throw new Error(data.error || detail);
+      }
+      onAuthenticated(data.user);
+    } catch (requestError) {
+      setError(requestError.message || "Không kết nối được máy chủ. Hãy thử lại sau.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return <main className="auth-page">
+    <section className="auth-card">
+      <Brand />
+      <p className="eyebrow">KHÔNG GIAN CỦA BẠN</p>
+      <h1>{isRegister ? "Tạo tài khoản" : "Chào mừng trở lại"}</h1>
+      <p className="auth-description">{isRegister ? "Tạo tài khoản để bắt đầu sử dụng trợ lý phân loại rác." : "Đăng nhập để tiếp tục sử dụng GreenLens."}</p>
+      <form className="auth-form" onSubmit={submit}>
+        <label htmlFor="auth-email">Email</label>
+        <input id="auth-email" type="email" autoComplete="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="ban@email.com" />
+        <label htmlFor="auth-password">Mật khẩu</label>
+        <input id="auth-password" type="password" autoComplete={isRegister ? "new-password" : "current-password"} required minLength={8} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Ít nhất 8 ký tự" />
+        {isRegister && <><label htmlFor="auth-confirm-password">Nhập lại mật khẩu</label><input id="auth-confirm-password" type="password" autoComplete="new-password" required minLength={8} maxLength={128} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Nhập lại mật khẩu" /></>}
+        {error && <p className="auth-error" role="alert">{error}</p>}
+        <button className="button button-green auth-submit" type="submit" disabled={loading}>{loading ? "Đang xử lý…" : isRegister ? "Tạo tài khoản" : "Đăng nhập"}</button>
+      </form>
+      <p className="auth-switch">{isRegister ? "Đã có tài khoản?" : "Chưa có tài khoản?"} <button type="button" onClick={() => { setIsRegister(!isRegister); setError(""); }}> {isRegister ? "Đăng nhập" : "Tạo tài khoản"}</button></p>
+      <p className="auth-security"><Icon name="shield" size={15} />Mật khẩu được mã hóa trước khi lưu trữ.</p>
+    </section>
+    <aside className="auth-aside"><span className="auth-leaf"><Icon name="leaf" size={26} /></span><p className="eyebrow">GREENLENS</p><h2>Nhận diện rác,<br /><span>sống xanh hơn.</span></h2><p>Phân loại rác hữu cơ, tái chế và khó tái chế qua ảnh, video hoặc camera trực tuyến.</p><div className="auth-aside-note"><Icon name="spark" size={18} />Trợ lý phân loại luôn sẵn sàng khi bạn cần.</div></aside>
+  </main>;
 }
 
 const guideCategories = [

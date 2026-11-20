@@ -7,6 +7,7 @@ GreenLens là ứng dụng web nhận diện vật thể rác bằng camera ho�
 - Nhận diện một ảnh JPG/PNG, phân tích video bằng tối đa 8 khung hình lấy mẫu, hoặc bật camera trực tuyến để nhận diện định kỳ.
 - Gửi ảnh tới API, hiển thị bounding box, lớp dự đoán, độ tin cậy và hướng dẫn xử lý.
 - Theo dõi số lượt nhận diện và phân bố lớp trong phiên hiện tại.
+- Đăng ký/đăng nhập bằng email và mật khẩu; tài khoản lưu trong PostgreSQL, các API yêu cầu đăng nhập xác thực bằng JWT trong cookie `HttpOnly`.
 - Trang Hướng dẫn phân loại giải thích ba nhóm model, ví dụ thường gặp và gợi ý xử lý; nhắc người dùng kiểm tra quy định thu gom tại địa phương.
 - Giao diện dashboard theo bản duyệt [preview.html](src/frontend/preview.html), được chia thành component React; ba chế độ nhận diện đều có luồng hoạt động riêng và giao diện responsive cho màn hình máy tính.
 - Pipeline dataset cấu hình được, có kiểm tra trùng ảnh, nhóm gần trùng và rò rỉ ảnh giữa các tập.
@@ -16,7 +17,16 @@ GreenLens là ứng dụng web nhận diện vật thể rác bằng camera ho�
 
 ### Docker Compose
 
-Yêu cầu Docker Compose và model checkpoint. Mặc định dự án dùng `model/11-11-2026-yolo26n/weights/best.pt`.
+Yêu cầu Docker Compose, Python để tạo secret và model checkpoint. Mặc định dự án dùng `model/11-11-2026-yolo26n/weights/best.pt`.
+
+Tạo file cấu hình từ mẫu, sau đó thay `JWT_SECRET_KEY` bằng chuỗi ngẫu nhiên dài tối thiểu 32 ký tự và đổi mật khẩu PostgreSQL trước khi triển khai:
+
+```powershell
+Copy-Item .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Lệnh Python in secret ra terminal để bạn dán vào `.env`. Không chia sẻ hoặc commit file `.env`. Cookie được cấu hình `Secure=false` cho localhost; đặt `AUTH_COOKIE_SECURE=true` khi phục vụ qua HTTPS.
 
 ```powershell
 docker compose up --build
@@ -55,7 +65,11 @@ API chính:
 | Phương thức | Đường dẫn | Mô tả |
 |---|---|---|
 | `GET` | `/health` | Trạng thái backend và model |
-| `POST` | `/predict` | Nhận bytes ảnh dạng `application/octet-stream`, trả kết quả detection |
+| `POST` | `/auth/register` | Tạo tài khoản với email/mật khẩu và đăng nhập phiên mới |
+| `POST` | `/auth/login` | Đăng nhập và nhận JWT qua cookie `HttpOnly` |
+| `GET` | `/auth/me` | Trả tài khoản của phiên đang đăng nhập |
+| `POST` | `/auth/logout` | Xóa cookie phiên đăng nhập |
+| `POST` | `/predict` | Yêu cầu đăng nhập; nhận bytes ảnh dạng `application/octet-stream`, trả kết quả detection |
 
 Có thể đặt đường dẫn checkpoint qua biến môi trường `MODEL_PATH`. Kích thước ảnh mặc định tối đa 20 MiB; có thể thay đổi bằng `MAX_IMAGE_BYTES`.
 
@@ -178,12 +192,13 @@ processed-data/               # Dataset YOLO chính dùng train
 processed-data-20k/           # Tập con 20.000 ảnh
 src/frontend/                 # React + Vite; UI trong App.jsx/components.jsx
 src/backend/main.py           # FastAPI và endpoint nhận diện
+src/backend/auth.py           # Tài khoản PostgreSQL, hash mật khẩu và JWT
 src/preprocess/                # Các stage tiền xử lý
 src/training/                  # Trainer YOLO/RT-DETR và đánh giá
 model/                         # Checkpoint pretrained và kết quả train
 tests/                         # Kiểm thử pipeline
 main.py                        # CLI tiền xử lý
-docker-compose.yml             # Frontend Nginx và backend API
+docker-compose.yml             # Frontend, backend, PostgreSQL và volume dữ liệu
 ```
 
 ## Kiểm thử
