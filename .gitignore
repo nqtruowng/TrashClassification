@@ -9,7 +9,6 @@ processed-data-20k/
 __pycache__/
 *.py[cod]
 artifacts/
-model/
 AGENTS.md
 tests/
 docs/
