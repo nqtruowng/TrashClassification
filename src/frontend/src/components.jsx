@@ -28,19 +28,27 @@ export function Brand() {
 }
 
 export function Sidebar({ page, onNavigate }) {
+  const links = [
+    ["dashboard", "\u0054\u1ed5ng quan", "grid"],
+    ["recognition", "AI nh\u1eadn di\u1ec7n", "scan"],
+    ["history", "L\u1ecbch s\u1eed phi\u00ean", "calendar"],
+    ["guide", "C\u1ea9m nang t\u00e1i ch\u1ebf", "book"],
+  ];
   return <aside className="sidebar">
     <Brand />
-    <p className="nav-caption">KHÔNG GIAN CỦA BẠN</p>
-    <nav className="side-nav" aria-label="Điều hướng chính">
-      <a href="#recognition" onClick={(event) => onNavigate(event, "recognition")} className={`side-nav-item ${page === "recognition" ? "is-selected" : ""}`} aria-current={page === "recognition" ? "page" : undefined}><Icon name="grid" />Nhận diện</a>
-      <a href="#guide" onClick={(event) => onNavigate(event, "guide")} className={`side-nav-item ${page === "guide" ? "is-selected" : ""}`} aria-current={page === "guide" ? "page" : undefined}><Icon name="book" />Hướng dẫn phân loại</a>
+    <div className="workspace-label">USER WORKSPACE<strong>Trash classification</strong></div>
+    <p className="nav-caption">WORKSPACE</p>
+    <nav className="side-nav" aria-label="\u0110i\u1ec1u h\u01b0\u1edbng ch\u00ednh">
+      {links.map(([id, label, icon]) => <a key={id} href={`#${id}`} onClick={(event) => onNavigate(event, id)} className={`side-nav-item ${page === id ? "is-selected" : ""}`} aria-current={page === id ? "page" : undefined}><Icon name={icon} />{label}</a>)}
     </nav>
+    <div className="sidebar-note"><strong>Phiên hiện tại</strong><small>Số liệu nhận diện được tính trong phiên này.</small></div>
     <div className="sidebar-status"><i /><span><strong>Model sẵn sàng</strong><small>YOLO26n · chạy cục bộ</small></span></div>
   </aside>;
 }
 
-export function AppHeader({ page, user, onLogout }) {
-  return <header className="topbar"><div className="breadcrumb">Không gian của bạn <span>/</span> <b>{page === "guide" ? "Hướng dẫn phân loại" : "Nhận diện rác"}</b></div><div className="topbar-right"><span className="model-status"><i /> Đang hoạt động</span><span className="account-email">{user.email}</span><button className="logout-button" type="button" onClick={onLogout}>Đăng xuất</button></div></header>;
+export function AppHeader({ page, user, onLogout, onAdmin }) {
+  const labels = { dashboard: "T\u1ed5ng quan", recognition: "AI nh\u1eadn di\u1ec7n", history: "L\u1ecbch s\u1eed phi\u00ean", guide: "C\u1ea9m nang t\u00e1i ch\u1ebf" };
+  return <header className="topbar"><div className="breadcrumb">User workspace <span>/</span> <b>{labels[page] || labels.dashboard}</b></div><div className="topbar-right"><span className="model-status"><i /> Đang hoạt động</span><span className="account-email">{user.email}</span><button className="logout-button" type="button" onClick={onAdmin}>Admin portal</button><button className="logout-button" type="button" onClick={onLogout}>Đăng xuất</button></div></header>;
 }
 
 export function AuthPage({ onAuthenticated }) {
@@ -86,8 +94,8 @@ export function AuthPage({ onAuthenticated }) {
       <h1>{isRegister ? "Tạo tài khoản" : "Chào mừng trở lại"}</h1>
       <p className="auth-description">{isRegister ? "Tạo tài khoản để bắt đầu sử dụng trợ lý phân loại rác." : "Đăng nhập để tiếp tục sử dụng GreenLens."}</p>
       <form className="auth-form" onSubmit={submit}>
-        <label htmlFor="auth-email">Email</label>
-        <input id="auth-email" type="email" autoComplete="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="ban@email.com" />
+        <label htmlFor="auth-email">Tài khoản</label>
+        <input id="auth-email" type="email" autoComplete="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} />
         <label htmlFor="auth-password">Mật khẩu</label>
         <input id="auth-password" type="password" autoComplete={isRegister ? "new-password" : "current-password"} required minLength={8} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Ít nhất 8 ký tự" />
         {isRegister && <><label htmlFor="auth-confirm-password">Nhập lại mật khẩu</label><input id="auth-confirm-password" type="password" autoComplete="new-password" required minLength={8} maxLength={128} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Nhập lại mật khẩu" /></>}
@@ -248,6 +256,43 @@ export function SessionCard({ counts, total }) {
     <div className="stat-box"><span><i className="dot-organic" />Hữu cơ</span><strong>{String(counts.organic).padStart(2, "0")}</strong></div>
     <div className="stat-box"><span><i className="dot-other" />Khác</span><strong>{String(counts.other).padStart(2, "0")}</strong></div>
   </div></article>;
+}
+
+
+export function DashboardPage({ total, recycleRate, confidence, onNavigate }) {
+  return <>
+    <div className="main-head"><div><p className="eyebrow">TỔNG QUAN CÁ NHÂN</p><h1>Chào bạn</h1><p className="subhead">Theo dõi các phiên nhận diện trong lần sử dụng này.</p></div><button className="button button-green" type="button" onClick={() => onNavigate("recognition")}>Bắt đầu nhận diện <Icon name="scan" /></button></div>
+    <section className="cards user-stats" aria-label="Thống kê phiên nhận diện">
+      <StatCard label="Vật thể đã nhận diện" value={total} foot="Tổng lượt qua ảnh, video và camera" icon="recycle" />
+      <StatCard label="Tỷ lệ tái chế" value={`${recycleRate}%`} foot="Trong phiên hiện tại" icon="image" />
+      <StatCard label="Độ tin cậy gần nhất" value={`${confidence}%`} foot="Theo kết quả vừa nhận diện" icon="spark" />
+    </section>
+    <section className="dashboard-welcome panel"><div><span className="guide-icon"><Icon name="leaf" /></span><h2>Sẵn sàng phân loại rác?</h2><p>Tải ảnh, chọn video hoặc bật camera để nhận gợi ý phân loại.</p></div><button className="button button-outline" type="button" onClick={() => onNavigate("guide")}>Xem cẩm nang</button></section>
+  </>;
+}
+
+export function HistoryPage({ total, counts }) {
+  const hasHistory = total > 0;
+  return <div className="history-page"><div className="main-head"><div><p className="eyebrow">LỊCH SỬ PHIÊN</p><h1>Lịch sử nhận diện</h1><p className="subhead">Tổng hợp hoạt động trong phiên hiện tại.</p></div></div><article className="panel"><div className="panel-head"><div><h2>Các nhóm rác đã nhận diện</h2><p>{total} vật thể trong phiên này</p></div></div>{hasHistory ? <div className="history-list">{[["Tái chế", counts.recycle, "recycle"], ["Hữu cơ", counts.organic, "organic"], ["Không tái chế", counts.non_recyclable, "other"], ["Khác", counts.other, "other"]].filter(([, count]) => count > 0).map(([name, count, icon]) => <div className="history-row" key={name}><span className="guide-icon"><Icon name={icon} /></span><strong>{name}</strong><span>{count} vật thể</span></div>)}</div> : <div className="empty-state"><span className="guide-icon"><Icon name="calendar" /></span><strong>Chưa có phiên nhận diện</strong><p>Kết quả sẽ xuất hiện tại đây sau khi bạn phân tích ảnh hoặc video.</p></div>}</article></div>;
+}
+
+const adminLinks = [["overview", "Tổng quan", "grid"], ["analytics", "Thống kê", "spark"], ["records", "Lịch sử nhận diện", "calendar"], ["models", "Model & đánh giá", "scan"], ["users", "Người dùng", "other"]];
+const demoUsers = [["linh.nguyen@email.com", "248", "5 phút trước", true], ["minh.tran@email.com", "186", "22 phút trước", true], ["ha.pham@email.com", "104", "1 giờ trước", false]];
+
+export function AdminPortal({ onExit }) {
+  const [view, setView] = useState("overview");
+  const [selectedModel, setSelectedModel] = useState("11-11-2026-yolo26n");
+  const title = adminLinks.find(([id]) => id === view)?.[1] || "Tổng quan";
+  return <div className="app-shell admin-app">
+    <aside className="sidebar admin-sidebar"><Brand /><div className="workspace-label">ADMIN CONSOLE<strong>Quản trị hệ thống</strong></div><p className="nav-caption">QUẢN LÝ</p><nav className="side-nav" aria-label="Điều hướng admin">{adminLinks.map(([id, label, icon]) => <button key={id} className={`side-nav-item ${view === id ? "is-selected" : ""}`} type="button" onClick={() => setView(id)}><Icon name={icon} />{label}</button>)}</nav><div className="sidebar-note"><strong>Admin workspace</strong><small>Theo dõi dữ liệu toàn hệ thống</small></div><div className="sidebar-status"><span className="avatar">A</span><span><strong>System Admin</strong><small>Quản trị viên</small></span></div></aside>
+    <div className="app-content"><header className="topbar"><div className="breadcrumb">Admin <span>/</span> <b>{title}</b></div><button className="logout-button" type="button" onClick={onExit}>Mở User portal</button></header><main className="main-area admin-main">
+      {view === "overview" && <><div className="main-head"><div><p className="eyebrow">TOÀN HỆ THỐNG</p><h1>Tổng quan</h1><p className="subhead">Tình hình sử dụng và hiệu suất nhận diện.</p></div><span className="pill date-pill">30 ngày qua</span></div><div className="cards admin-stats">{[["Tổng người dùng", "1,284", "+12.8% so với tháng trước"], ["Lượt nhận diện", "18,426", "Tổng trên tất cả tài khoản"], ["User hoạt động", "362", "Trong 30 ngày gần nhất"], ["Model đang chạy", "11-11-2026", "best.pt · YOLO26n"]].map(([label, value, foot]) => <article className="stat-card" key={label}><div className="stat-top">{label}<span className="stat-icon"><Icon name="spark" size={15} /></span></div><div className="stat-value">{value}</div><div className="stat-foot">{foot}</div></article>)}</div><div className="callout preview-data-note">Dữ liệu minh họa cho bản xem trước giao diện.</div><div className="cards admin-overview-grid"><article className="panel"><div className="panel-heading"><div><h2>Lượt nhận diện</h2><p>Khối lượng theo ngày trong 7 ngày</p></div><span className="pill">7 ngày</span></div><div className="chart-bars">{[[42,"T2"],[61,"T3"],[53,"T4"],[78,"T5"],[67,"T6"],[92,"T7"],[72,"CN"]].map(([height, day]) => <div key={day}><i style={{height:`${height}%`}}/><small>{day}</small></div>)}</div></article><article className="panel"><div className="panel-heading"><div><h2>Phân loại rác</h2><p>Tỷ trọng detection</p></div></div><div className="distribution">{[["Tái chế",48,"green"],["Hữu cơ",31,"amber"],["Không tái chế",21,"gray"]].map(([label, value, tone]) => <div className="distribution-item" key={label}><div><span><i className={`legend-dot ${tone}-dot`}/>{label}</span><b>{value}%</b></div><div className={`distribution-bar ${tone}`}><span style={{width:`${value}%`}}/></div></div>)}</div></article></div><article className="panel admin-table-panel"><div className="panel-heading"><div><h2>Người dùng hoạt động</h2><p>Tài khoản có nhiều lượt nhận diện</p></div><button className="text-link" onClick={() => setView("users")}>Xem danh sách</button></div><div className="table-wrap"><table><thead><tr><th>NGƯỜI DÙNG</th><th>LƯỢT NHẬN DIỆN</th><th>HOẠT ĐỘNG GẦN ĐÂY</th><th>TRẠNG THÁI</th></tr></thead><tbody>{demoUsers.map(([email, count, recent, active]) => <tr key={email}><td>{email}</td><td>{count}</td><td>{recent}</td><td><span className={`pill ${active ? "green" : ""}`}>{active ? "Hoạt động" : "Không hoạt động"}</span></td></tr>)}</tbody></table></div></article></>}
+      {view === "analytics" && <><div className="main-head"><div><p className="eyebrow">ANALYTICS</p><h1>Thống kê toàn hệ thống</h1><p className="subhead">Xu hướng sử dụng và phân loại theo thời gian.</p></div></div><div className="cards admin-stats">{[["Precision validation","59.93%"],["Recall validation","53.06%"],["mAP@50","56.68%"],["mAP@50–95","41.73%"]].map(([label,value])=><article className="stat-card" key={label}><div className="stat-top">{label}</div><div className="stat-value">{value}</div><div className="stat-foot">YOLO26n · validation</div></article>)}</div><div className="callout preview-data-note">Metric minh họa từ lần validation của model YOLO26n.</div></>}
+      {view === "records" && <><div className="main-head"><div><p className="eyebrow">RECOGNITION LOG</p><h1>Lịch sử nhận diện</h1><p className="subhead">Các lượt nhận diện gần đây trên hệ thống.</p></div></div><article className="panel admin-table-panel"><div className="table-wrap"><table><thead><tr><th>NGƯỜI DÙNG</th><th>VẬT THỂ</th><th>PHÂN LOẠI</th><th>ĐỘ TIN CẬY</th><th>THỜI GIAN</th></tr></thead><tbody>{[["linh.nguyen@email.com","Chai nhựa","Tái chế","96%","5 phút trước"],["minh.tran@email.com","Vỏ rau củ","Hữu cơ","91%","22 phút trước"],["ha.pham@email.com","Túi nhiều lớp","Không tái chế","84%","1 giờ trước"]].map(([email,item,category,confidence,time])=><tr key={email}><td>{email}</td><td>{item}</td><td>{category}</td><td>{confidence}</td><td>{time}</td></tr>)}</tbody></table></div><div className="table-note">Dữ liệu minh họa cho bản xem trước giao diện.</div></article></>}
+      {view === "models" && <><div className="main-head"><div><p className="eyebrow">MODEL CENTER</p><h1>Model & đánh giá</h1><p className="subhead">Model hiện được chọn để phục vụ nhận diện.</p></div><span className="pill green">Inference: {selectedModel}</span></div><div className="cards model-admin-grid"><article className="panel"><div className="panel-heading"><div><h2>Model trong workspace</h2><p>Chọn model dùng cho request tiếp theo.</p></div></div><div className="model-options">{[["11-11-2026-yolo26n","YOLO26n · best.pt"],["10-11-2026-yolo26n","YOLO26n · checkpoint"]].map(([name,detail])=><label className={`model-option ${selectedModel===name?'selected':''}`} key={name}><input type="radio" name="admin-model" checked={selectedModel===name} onChange={()=>setSelectedModel(name)} /><span><b>{name}</b><small>{detail}</small></span><em>{selectedModel===name?"Đang chạy":"Chọn"}</em></label>)}</div></article><article className="panel"><div className="panel-heading"><div><h2>Đánh giá model</h2><p>Metric validation của checkpoint đang chọn.</p></div></div><div className="eval-metrics">{[["Precision","59.93%"],["Recall","53.06%"],["mAP@50","56.68%"]].map(([label,value])=><div key={label}><span>{label}</span><b>{selectedModel==="11-11-2026-yolo26n"?value:"Chưa có dữ liệu"}</b></div>)}</div><p className="table-note">Confidence của một lượt nhận diện không phải Precision validation.</p></article></div></>}
+      {view === "users" && <><div className="main-head"><div><p className="eyebrow">USER MANAGEMENT</p><h1>Người dùng</h1><p className="subhead">Theo dõi tài khoản và mức độ sử dụng.</p></div></div><article className="panel admin-table-panel"><div className="table-wrap"><table><thead><tr><th>EMAIL</th><th>LƯỢT NHẬN DIỆN</th><th>LẦN CUỐI</th><th>TRẠNG THÁI</th></tr></thead><tbody>{demoUsers.map(([email,count,recent,active])=><tr key={email}><td>{email}</td><td>{count}</td><td>{recent}</td><td><span className={`pill ${active?'green':''}`}>{active?'Hoạt động':'Không hoạt động'}</span></td></tr>)}</tbody></table></div></article></>}
+    </main></div>
+  </div>;
 }
 
 export function Toast({ children }) {

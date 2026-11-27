@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  AdminPortal,
   AppHeader,
+  DashboardPage,
+  HistoryPage,
   AuthPage,
   GuidePage,
   Icon,
@@ -46,7 +49,8 @@ function App() {
   const [counts, setCounts] = useState({ recycle: 0, non_recyclable: 0, organic: 0, other: 0 });
   const [toast, setToast] = useState("");
   const [cameraError, setCameraError] = useState("");
-  const [page, setPage] = useState(() => window.location.hash === "#guide" ? "guide" : "recognition");
+  const [page, setPage] = useState(() => ["dashboard", "recognition", "history", "guide"].includes(window.location.hash.slice(1)) ? window.location.hash.slice(1) : "dashboard");
+  const [adminPortal, setAdminPortal] = useState(false);
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
@@ -61,7 +65,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const syncPage = () => setPage(window.location.hash === "#guide" ? "guide" : "recognition");
+    const syncPage = () => { const next = window.location.hash.slice(1); if (["dashboard", "recognition", "history", "guide"].includes(next)) setPage(next); };
     window.addEventListener("hashchange", syncPage);
     window.addEventListener("popstate", syncPage);
     return () => {
@@ -72,7 +76,7 @@ function App() {
 
   function navigate(event, nextPage) {
     event.preventDefault();
-    const hash = nextPage === "guide" ? "#guide" : "#recognition";
+    const hash = `#${nextPage}`;
     if (window.location.hash !== hash) window.history.pushState({}, "", hash);
     setPage(nextPage);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -309,26 +313,26 @@ function App() {
 
   if (authLoading) return <div className="auth-loading" role="status">Đang kiểm tra phiên đăng nhập…</div>;
   if (!authUser) return <AuthPage onAuthenticated={setAuthUser} />;
+  if (adminPortal) return <AdminPortal onExit={() => setAdminPortal(false)} />;
 
   return <div className="app-shell">
     <Sidebar page={page} onNavigate={navigate} />
     <div className="app-content">
-      <AppHeader page={page} user={authUser} onLogout={logout} />
-      {page === "guide" ? <main className="main-area"><GuidePage /></main> : <main className="main-area">
-      <PageHeading today={today} />
-      <section className="cards user-stats" aria-label="Thống kê phiên nhận diện">
-        <StatCard label="Vật thể đã nhận diện" value={total} foot="Tổng lượt qua ảnh, video và camera" icon="recycle" />
-        <StatCard label="Tỷ lệ tái chế" value={`${recycleRate}%`} foot="Trong phiên hiện tại" icon="image" />
-        <StatCard label="Độ tin cậy gần nhất" value={`${confidence}%`} foot="Theo kết quả vừa nhận diện" icon="spark" />
-      </section>
-      <section className="cards user-grid">
-        <RecognitionPanel mode={mode} onModeChange={changeMode} videoRef={videoRef} fileRef={fileRef} videoFileRef={videoFileRef} streaming={streaming} previewUrl={previewUrl} videoUrl={videoUrl} resultImageUrl={resultImageUrl} result={result} selectedFile={selectedFile} selectedVideo={selectedVideo} loading={loading} modeLocked={loading && mode === "video"} videoProgress={videoProgress} error={error} cameraError={cameraError} toggleCamera={toggleCamera} selectFile={selectFile} selectVideo={selectVideo} analyze={analyze} />
-        <div className="right-stack">
-          <ResultCard best={best} result={result} loading={loading} confidence={confidence} videoProgress={videoProgress} />
-          <SessionCard counts={counts} total={total} />
-        </div>
-      </section>
-      </main>}
+      <AppHeader page={page} user={authUser} onLogout={logout} onAdmin={() => setAdminPortal(true)} />
+      <main className="main-area">
+        {page === "guide" ? <GuidePage /> : page === "dashboard" ? <DashboardPage total={total} recycleRate={recycleRate} confidence={confidence} onNavigate={(next) => { window.history.pushState({}, "", `#${next}`); setPage(next); }} /> : page === "history" ? <HistoryPage total={total} counts={counts} /> : <>
+          <PageHeading today={today} />
+          <section className="cards user-stats" aria-label="Thống kê phiên nhận diện">
+            <StatCard label="Vật thể đã nhận diện" value={total} foot="Tổng lượt qua ảnh, video và camera" icon="recycle" />
+            <StatCard label="Tỷ lệ tái chế" value={`${recycleRate}%`} foot="Trong phiên hiện tại" icon="image" />
+            <StatCard label="Độ tin cậy gần nhất" value={`${confidence}%`} foot="Theo kết quả vừa nhận diện" icon="spark" />
+          </section>
+          <section className="cards user-grid">
+            <RecognitionPanel mode={mode} onModeChange={changeMode} videoRef={videoRef} fileRef={fileRef} videoFileRef={videoFileRef} streaming={streaming} previewUrl={previewUrl} videoUrl={videoUrl} resultImageUrl={resultImageUrl} result={result} selectedFile={selectedFile} selectedVideo={selectedVideo} loading={loading} modeLocked={loading && mode === "video"} videoProgress={videoProgress} error={error} cameraError={cameraError} toggleCamera={toggleCamera} selectFile={selectFile} selectVideo={selectVideo} analyze={analyze} />
+            <div className="right-stack"><ResultCard best={best} result={result} loading={loading} confidence={confidence} videoProgress={videoProgress} /><SessionCard counts={counts} total={total} /></div>
+          </section>
+        </>}
+      </main>
     </div>
     <Toast>{toast}</Toast>
   </div>;
